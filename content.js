@@ -108,7 +108,7 @@
         overlay.innerHTML = `
       <div class="tweet-bookmark-modal">
         <div class="tweet-bookmark-modal-header">
-          <h2 class="tweet-bookmark-modal-title">${isEdit ? 'Edit Bookmark' : 'Save Tweet'}</h2>
+          <h2 class="tweet-bookmark-modal-title">${isEdit ? '✏️ Edit Bookmark' : '📌 Save Tweet'}</h2>
           <button class="tweet-bookmark-modal-close">&times;</button>
         </div>
         <div class="tweet-bookmark-modal-body">
@@ -122,7 +122,18 @@
             <input type="text" class="tweet-bookmark-input" id="tweet-bookmark-tags" 
                    placeholder="tech, ai, interesting" 
                    value="${tweetData.tags ? tweetData.tags.join(', ') : ''}">
-            <p class="tweet-bookmark-hint">Separate tags with commas</p>
+            <div class="tweet-bookmark-quick-tags">
+              <span class="tweet-bookmark-quick-tag" data-tag="important">🔥 Important</span>
+              <span class="tweet-bookmark-quick-tag" data-tag="learn">📚 Learn</span>
+              <span class="tweet-bookmark-quick-tag" data-tag="tech">💻 Tech</span>
+              <span class="tweet-bookmark-quick-tag" data-tag="thread">🧵 Thread</span>
+            </div>
+          </div>
+          <div class="tweet-bookmark-form-group">
+            <label class="tweet-bookmark-label">Notes (optional)</label>
+            <input type="text" class="tweet-bookmark-input" id="tweet-bookmark-notes" 
+                   placeholder="Why are you saving this?"
+                   value="${tweetData.notes || ''}">
           </div>
         </div>
         <div class="tweet-bookmark-modal-footer">
@@ -139,6 +150,8 @@
         const cancelBtn = overlay.querySelector('.tweet-bookmark-btn-cancel');
         const saveBtn = overlay.querySelector('.tweet-bookmark-btn-save');
         const tagsInput = overlay.querySelector('#tweet-bookmark-tags');
+        const notesInput = overlay.querySelector('#tweet-bookmark-notes');
+        const quickTags = overlay.querySelectorAll('.tweet-bookmark-quick-tag');
 
         const closeModal = () => overlay.remove();
 
@@ -146,6 +159,25 @@
         cancelBtn.addEventListener('click', closeModal);
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) closeModal();
+        });
+
+        // Quick tag click handlers
+        quickTags.forEach(tagEl => {
+            tagEl.addEventListener('click', () => {
+                const tag = tagEl.dataset.tag;
+                const currentTags = tagsInput.value.trim();
+
+                if (currentTags) {
+                    const tagsArray = currentTags.split(',').map(t => t.trim());
+                    if (!tagsArray.includes(tag)) {
+                        tagsInput.value = currentTags + ', ' + tag;
+                    }
+                } else {
+                    tagsInput.value = tag;
+                }
+
+                tagsInput.focus();
+            });
         });
 
         // Focus tags input
@@ -161,27 +193,31 @@
             const bookmark = {
                 ...tweetData,
                 tags,
+                notes: notesInput.value.trim() || '',
                 savedAt: Date.now()
             };
 
             try {
                 await saveBookmark(bookmark);
                 closeModal();
-                showToast(isEdit ? 'Bookmark updated!' : 'Tweet saved!');
+                showToast(isEdit ? '✨ Bookmark updated!' : '🎉 Tweet saved!');
 
                 // Update button appearance
                 const btn = document.querySelector(`[data-tweet-id="${tweetData.id}"]`);
                 if (btn) btn.classList.add('saved');
             } catch (error) {
                 console.error('Tweet Bookmark: Error saving:', error);
-                showToast('Error saving bookmark');
+                showToast('❌ Error saving bookmark');
             }
         });
 
-        // Enter key to save
-        tagsInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+        // Enter key to save, Escape to close
+        overlay.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
                 saveBtn.click();
+            }
+            if (e.key === 'Escape') {
+                closeModal();
             }
         });
     }
