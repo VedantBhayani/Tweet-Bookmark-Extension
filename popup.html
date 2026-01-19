@@ -5,166 +5,30 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tweet Bookmarks</title>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Sora:wght@400;500;600&display=swap"
-        rel="stylesheet">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Sora', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: #0c0c0c;
-            color: #fafafa;
-            width: 300px;
-            padding: 24px;
-            position: relative;
-        }
-
-        /* Subtle texture */
-        body::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-            opacity: 0.03;
-            pointer-events: none;
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 24px;
-            position: relative;
-        }
-
-        .logo-icon {
-            font-size: 36px;
-            margin-bottom: 8px;
-            display: block;
-        }
-
-        .title {
-            font-family: 'Playfair Display', Georgia, serif;
-            font-size: 20px;
-            font-weight: 700;
-            color: #fafafa;
-            letter-spacing: -0.02em;
-        }
-
-        .title-accent {
-            color: #e6a756;
-            font-style: italic;
-        }
-
-        .stats {
-            background: #141414;
-            border: 1px solid rgba(255, 255, 255, 0.04);
-            border-radius: 8px;
-            padding: 24px;
-            text-align: center;
-            margin-bottom: 20px;
-            position: relative;
-        }
-
-        .stat-value {
-            font-family: 'Playfair Display', Georgia, serif;
-            font-size: 48px;
-            font-weight: 700;
-            color: #e6a756;
-            line-height: 1;
-            margin-bottom: 4px;
-        }
-
-        .stat-label {
-            font-size: 10px;
-            color: #6b6b6b;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-        }
-
-        .btn {
-            display: block;
-            width: 100%;
-            padding: 14px 20px;
-            border-radius: 6px;
-            font-size: 13px;
-            font-weight: 600;
-            font-family: inherit;
-            cursor: pointer;
-            text-align: center;
-            text-decoration: none;
-            margin-bottom: 10px;
-            transition: all 0.15s ease;
-        }
-
-        .btn-primary {
-            background: #e6a756;
-            color: #0c0c0c;
-            border: none;
-        }
-
-        .btn-primary:hover {
-            filter: brightness(1.1);
-            transform: translateY(-1px);
-        }
-
-        .btn-secondary {
-            background: transparent;
-            color: #b8b8b8;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-        }
-
-        .btn-secondary:hover {
-            background: #141414;
-            border-color: rgba(255, 255, 255, 0.12);
-        }
-
-        .btn-icon {
-            margin-right: 8px;
-        }
-
-        .footer {
-            text-align: center;
-            font-size: 11px;
-            color: #3d3d3d;
-            margin-top: 16px;
-            padding-top: 16px;
-            border-top: 1px solid rgba(255, 255, 255, 0.04);
-        }
-
-        .version {
-            margin-top: 4px;
-            font-size: 10px;
-            color: #2a2a2a;
-            letter-spacing: 0.05em;
-        }
-    </style>
+    <link rel="stylesheet" href="popup.css">
 </head>
 
 <body>
     <div class="header">
-        <span class="logo-icon">📌</span>
+        <span class="logo-icon" aria-hidden="true">📌</span>
         <div class="title">Tweet <span class="title-accent">Bookmarks</span></div>
     </div>
 
     <div class="stats">
-        <div class="stat-value" id="bookmark-count">0</div>
+        <div class="stat-value" id="bookmark-count" aria-live="polite">0</div>
         <div class="stat-label">Saved Tweets</div>
     </div>
 
-    <button class="btn btn-primary" id="open-dashboard">
-        <span class="btn-icon">→</span>Open Dashboard
+    <button class="btn btn-primary" id="open-dashboard" aria-label="Open bookmarks dashboard">
+        <span class="btn-icon" aria-hidden="true">→</span>Open Dashboard
     </button>
-    <button class="btn btn-secondary" id="export-btn">
-        <span class="btn-icon">↓</span>Export All
+    <button class="btn btn-secondary" id="export-btn" aria-label="Export all bookmarks as JSON file">
+        <span class="btn-icon" aria-hidden="true">↓</span>Export All
     </button>
 
     <div class="footer">
         Save tweets with 📌 on X
-        <div class="version">v1.1 • Editorial Edition</div>
+        <div class="version">v1.1 • Production Ready</div>
     </div>
 
     <script src="storage.js"></script>
