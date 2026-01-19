@@ -1,7 +1,7 @@
 /* Tweet Bookmark Extension - Content Script Styles */
-/* Premium Edition - Glassmorphism & Modern Design */
+/* Editorial Magazine Aesthetic - Refined & Distinctive */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600&display=swap');
 
 /* Save Button */
 .tweet-bookmark-btn {
@@ -10,79 +10,35 @@
   justify-content: center;
   width: 36px;
   height: 36px;
-  border-radius: 50%;
+  border-radius: 6px;
   border: none;
   background: transparent;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.15s ease;
   color: #71767b;
   font-size: 16px;
-  position: relative;
-}
-
-.tweet-bookmark-btn::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.2));
-  opacity: 0;
-  transition: opacity 0.2s ease;
 }
 
 .tweet-bookmark-btn:hover {
-  background-color: rgba(99, 102, 241, 0.1);
-  color: #6366f1;
-  transform: scale(1.1);
-}
-
-.tweet-bookmark-btn:hover::before {
-  opacity: 1;
+  background: rgba(230, 167, 86, 0.1);
+  color: #e6a756;
 }
 
 .tweet-bookmark-btn.saved {
-  color: #6366f1;
+  color: #e6a756;
 }
 
-.tweet-bookmark-btn.saved::after {
-  content: '';
-  position: absolute;
-  inset: -2px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  opacity: 0.3;
-  animation: pulse 2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 0.3;
-  }
-
-  50% {
-    transform: scale(1.2);
-    opacity: 0;
-  }
-}
-
-/* Save Modal Overlay */
+/* Modal Overlay */
 .tweet-bookmark-modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.7);
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 999999;
   backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  animation: fadeIn 0.2s ease;
+  animation: fadeIn 0.15s ease;
 }
 
 @keyframes fadeIn {
@@ -95,38 +51,24 @@
   }
 }
 
-/* Save Modal */
+/* Modal */
 .tweet-bookmark-modal {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  background: linear-gradient(135deg, rgba(22, 22, 35, 0.95), rgba(30, 30, 50, 0.95));
-  border-radius: 24px;
+  font-family: 'Sora', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #141414;
+  border-radius: 12px;
   width: 90%;
-  max-width: 520px;
+  max-width: 480px;
   max-height: 85vh;
   overflow: hidden;
-  box-shadow:
-    0 25px 50px -12px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.1),
-    0 0 80px rgba(99, 102, 241, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  animation: modalSlide 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  animation: modalReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.tweet-bookmark-modal::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6, #a855f7);
-}
-
-@keyframes modalSlide {
+@keyframes modalReveal {
   from {
     opacity: 0;
-    transform: scale(0.9) translateY(20px);
+    transform: scale(0.95) translateY(10px);
   }
 
   to {
@@ -140,71 +82,65 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .tweet-bookmark-modal-title {
-  font-size: 20px;
-  font-weight: 700;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fafafa;
   margin: 0;
+  letter-spacing: -0.02em;
 }
 
 .tweet-bookmark-modal-close {
-  background: rgba(255, 255, 255, 0.05);
+  background: transparent;
   border: none;
-  color: #71767b;
-  font-size: 20px;
+  color: #6b6b6b;
+  font-size: 24px;
   cursor: pointer;
-  padding: 8px;
-  border-radius: 10px;
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s ease;
+  padding: 4px;
+  transition: color 0.15s ease;
 }
 
 .tweet-bookmark-modal-close:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #e7e9ea;
+  color: #fafafa;
 }
 
 .tweet-bookmark-modal-body {
-  padding: 0 24px 24px;
+  padding: 20px 24px;
   overflow-y: auto;
   max-height: 55vh;
 }
 
 /* Tweet Preview */
 .tweet-bookmark-preview {
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 16px;
+  background: #0c0c0c;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
   padding: 16px;
   margin-bottom: 20px;
+  border-left: 3px solid #e6a756;
 }
 
 .tweet-bookmark-preview-author {
-  font-weight: 700;
-  color: #e7e9ea;
+  font-weight: 600;
+  color: #fafafa;
   margin-bottom: 2px;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .tweet-bookmark-preview-handle {
-  color: #71767b;
-  font-size: 13px;
+  color: #6b6b6b;
+  font-size: 12px;
   margin-bottom: 12px;
+  font-family: 'JetBrains Mono', monospace;
 }
 
 .tweet-bookmark-preview-content {
-  color: #ced4da;
+  color: #b8b8b8;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.6;
   white-space: pre-wrap;
   word-wrap: break-word;
 }
@@ -216,41 +152,41 @@
 
 .tweet-bookmark-label {
   display: block;
-  color: #94a3b8;
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 10px;
+  color: #6b6b6b;
+  font-size: 10px;
+  font-weight: 500;
+  margin-bottom: 8px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.1em;
 }
 
 .tweet-bookmark-input {
   width: 100%;
-  padding: 14px 18px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(0, 0, 0, 0.3);
-  color: #e7e9ea;
-  font-size: 15px;
+  padding: 14px 16px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #0c0c0c;
+  color: #fafafa;
+  font-size: 14px;
   font-family: inherit;
   outline: none;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
   box-sizing: border-box;
 }
 
 .tweet-bookmark-input:focus {
-  border-color: #6366f1;
-  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+  border-color: #e6a756;
+  box-shadow: 0 0 0 3px rgba(230, 167, 86, 0.15);
 }
 
 .tweet-bookmark-input::placeholder {
-  color: #64748b;
+  color: #3d3d3d;
 }
 
 .tweet-bookmark-hint {
-  color: #64748b;
-  font-size: 12px;
-  margin-top: 8px;
+  color: #3d3d3d;
+  font-size: 11px;
+  margin-top: 6px;
 }
 
 /* Quick Tags */
@@ -263,67 +199,65 @@
 
 .tweet-bookmark-quick-tag {
   padding: 6px 12px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #94a3b8;
-  font-size: 12px;
+  border-radius: 4px;
+  background: #1a1a1a;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  color: #6b6b6b;
+  font-size: 11px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .tweet-bookmark-quick-tag:hover {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: #fff;
-  border-color: transparent;
-  transform: translateY(-2px);
+  background: #e6a756;
+  color: #0c0c0c;
+  border-color: #e6a756;
 }
 
 /* Modal Footer */
 .tweet-bookmark-modal-footer {
   padding: 16px 24px;
-  background: rgba(0, 0, 0, 0.2);
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  background: #1a1a1a;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
   display: flex;
   justify-content: flex-end;
   gap: 12px;
 }
 
 .tweet-bookmark-btn-cancel {
-  padding: 12px 24px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 12px 20px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   background: transparent;
-  color: #e7e9ea;
-  font-size: 14px;
-  font-weight: 600;
+  color: #b8b8b8;
+  font-size: 13px;
+  font-weight: 500;
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .tweet-bookmark-btn-cancel:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: #1e1e1e;
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .tweet-bookmark-btn-save {
-  padding: 12px 28px;
-  border-radius: 12px;
+  padding: 12px 24px;
+  border-radius: 6px;
   border: none;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
+  background: #e6a756;
+  color: #0c0c0c;
+  font-size: 13px;
+  font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
+  transition: all 0.15s ease;
 }
 
 .tweet-bookmark-btn-save:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(99, 102, 241, 0.4);
+  filter: brightness(1.1);
+  transform: translateY(-1px);
 }
 
 .tweet-bookmark-btn-save:disabled {
@@ -332,34 +266,34 @@
   transform: none;
 }
 
-/* Success Toast */
+/* Toast */
 .tweet-bookmark-toast {
   position: fixed;
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: #fff;
-  padding: 14px 28px;
-  border-radius: 16px;
-  font-size: 14px;
-  font-weight: 600;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #1e1e1e;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 3px solid #e6a756;
+  color: #fafafa;
+  padding: 14px 24px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: 'Sora', -apple-system, BlinkMacSystemFont, sans-serif;
   z-index: 9999999;
-  animation: toastSlide 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-  box-shadow:
-    0 10px 40px rgba(99, 102, 241, 0.4),
-    0 0 0 1px rgba(255, 255, 255, 0.1);
+  animation: toastReveal 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
-@keyframes toastSlide {
+@keyframes toastReveal {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(30px) scale(0.9);
+    transform: translateX(-50%) translateY(12px);
   }
 
   to {
     opacity: 1;
-    transform: translateX(-50%) translateY(0) scale(1);
+    transform: translateX(-50%) translateY(0);
   }
 }
