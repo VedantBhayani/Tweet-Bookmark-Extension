@@ -1,5 +1,5 @@
-// Tweet Bookmarks Dashboard - Premium Edition
-// Features: Search, Filter, Notes, Quick Tags, Animations
+// Tweet Bookmarks Dashboard - Production Ready
+// Features: Search, Filter, Notes, Quick Tags, Scroll Animations, Accessibility
 
 let allBookmarks = [];
 let filteredBookmarks = [];
@@ -7,6 +7,7 @@ let currentFilter = null;
 let currentSearch = '';
 let editingBookmarkId = null;
 let deletingBookmarkId = null;
+let scrollObserver = null;
 
 // DOM Elements
 const searchInput = document.getElementById('search-input');
@@ -34,12 +35,32 @@ const deleteModalClose = document.getElementById('delete-modal-close');
 const deleteCancel = document.getElementById('delete-cancel');
 const deleteConfirm = document.getElementById('delete-confirm');
 
+// Setup IntersectionObserver for scroll-triggered reveals
+function setupScrollObserver() {
+    if (scrollObserver) {
+        scrollObserver.disconnect();
+    }
+
+    scrollObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.remove('reveal-pending');
+                entry.target.classList.add('revealed');
+                scrollObserver.unobserve(entry.target);
+            }
+        });
+    }, {
+        threshold: 0.1,
+        rootMargin: '50px'
+    });
+}
+
 // Initialize
 async function init() {
+    setupScrollObserver();
     await loadBookmarks();
     setupEventListeners();
     setupQuickTags();
-    addCardAnimations();
 }
 
 // Load all bookmarks
@@ -56,7 +77,7 @@ async function loadBookmarks() {
     }
 }
 
-// Render bookmarks with staggered animation
+// Render bookmarks with scroll-triggered animation
 function renderBookmarks() {
     bookmarksContainer.innerHTML = '';
 
@@ -81,15 +102,21 @@ function renderBookmarks() {
     filteredBookmarks.forEach((bookmark, index) => {
         const card = createBookmarkCard(bookmark, index);
         bookmarksContainer.appendChild(card);
+        
+        // Setup scroll-triggered reveal
+        if (scrollObserver) {
+            card.classList.add('reveal-pending');
+            scrollObserver.observe(card);
+        }
     });
 }
 
-// Create bookmark card with premium styling
+// Create bookmark card
 function createBookmarkCard(bookmark, index) {
     const card = document.createElement('div');
     card.className = 'bookmark-card';
     card.dataset.id = bookmark.id;
-    card.style.animationDelay = `${index * 0.05}s`;
+    card.style.setProperty('--index', index);
 
     const savedDate = formatDate(bookmark.savedAt);
 
@@ -98,7 +125,7 @@ function createBookmarkCard(bookmark, index) {
         : '';
 
     const notesHtml = bookmark.notes
-        ? `<div class="bookmark-notes" style="font-size: 13px; color: var(--text-muted); font-style: italic; margin-bottom: 12px;">💭 ${escapeHtml(bookmark.notes)}</div>`
+        ? `<div class="bookmark-notes">💭 ${escapeHtml(bookmark.notes)}</div>`
         : '';
 
     card.innerHTML = `
@@ -108,8 +135,8 @@ function createBookmarkCard(bookmark, index) {
         <span class="bookmark-author-handle">${escapeHtml(bookmark.author || '')}</span>
       </div>
       <div class="bookmark-actions">
-        <button class="btn-icon" title="Edit" data-action="edit">✏️</button>
-        <button class="btn-icon" title="Delete" data-action="delete">🗑️</button>
+        <button class="btn-icon" title="Edit" aria-label="Edit bookmark" data-action="edit">✏️</button>
+        <button class="btn-icon" title="Delete" aria-label="Delete bookmark" data-action="delete">🗑️</button>
       </div>
     </div>
     <div class="bookmark-content">${escapeHtml(bookmark.content || 'No content')}</div>
@@ -117,7 +144,7 @@ function createBookmarkCard(bookmark, index) {
     ${tagsHtml ? `<div class="bookmark-tags">${tagsHtml}</div>` : ''}
     <div class="bookmark-footer">
       <span class="bookmark-date">📅 ${savedDate}</span>
-      <a href="${escapeHtml(bookmark.url)}" target="_blank" class="bookmark-link">View on X →</a>
+      <a href="${escapeHtml(bookmark.url)}" target="_blank" rel="noopener noreferrer" class="bookmark-link" aria-label="View tweet on X">View on X →</a>
     </div>
   `;
 
@@ -131,31 +158,7 @@ function createBookmarkCard(bookmark, index) {
         openDeleteModal(bookmark.id);
     });
 
-    // Add 3D tilt effect
-    addTiltEffect(card);
-
     return card;
-}
-
-// Add 3D tilt effect to cards
-function addTiltEffect(card) {
-    card.addEventListener('mousemove', (e) => {
-        const rect = card.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        const centerX = rect.width / 2;
-        const centerY = rect.height / 2;
-
-        const rotateX = (y - centerY) / 20;
-        const rotateY = (centerX - x) / 20;
-
-        card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) translateY(-4px)`;
-    });
-
-    card.addEventListener('mouseleave', () => {
-        card.style.transform = 'perspective(1000px) rotateX(0) rotateY(0) translateY(0)';
-    });
 }
 
 // Format date nicely
@@ -202,7 +205,16 @@ function renderTags() {
         const chip = document.createElement('span');
         chip.className = 'tag-chip' + (currentFilter === tag ? ' active' : '');
         chip.textContent = tag;
+        chip.setAttribute('role', 'button');
+        chip.setAttribute('tabindex', '0');
+        chip.setAttribute('aria-pressed', currentFilter === tag);
         chip.addEventListener('click', () => filterByTag(tag));
+        chip.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                filterByTag(tag);
+            }
+        });
         tagListEl.appendChild(chip);
     });
 }
@@ -299,7 +311,11 @@ function openEditModal(bookmark) {
     editTagsInput.value = bookmark.tags ? bookmark.tags.join(', ') : '';
     editNotesInput.value = bookmark.notes || '';
     editModal.style.display = 'flex';
-    setTimeout(() => editTagsInput.focus(), 100);
+    
+    // Focus trap - focus first input
+    setTimeout(() => {
+        editTagsInput.focus();
+    }, 100);
 }
 
 // Close edit modal
@@ -340,6 +356,11 @@ async function saveEdit() {
 function openDeleteModal(id) {
     deletingBookmarkId = id;
     deleteModal.style.display = 'flex';
+    
+    // Focus the cancel button by default (safer option)
+    setTimeout(() => {
+        deleteCancel.focus();
+    }, 100);
 }
 
 // Close delete modal
@@ -406,11 +427,14 @@ function showToast(message, type = 'success') {
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.textContent = message;
+    toast.setAttribute('role', 'alert');
+    toast.setAttribute('aria-live', 'polite');
     document.body.appendChild(toast);
 
     // Auto remove
     setTimeout(() => {
-        toast.style.animation = 'toastSlide 0.3s ease reverse';
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(-50%) translateY(16px)';
         setTimeout(() => toast.remove(), 300);
     }, 3000);
 }
@@ -428,15 +452,26 @@ function setupQuickTags() {
     // Sidebar quick tags
     const quickTags = document.querySelectorAll('#quick-tags .tag-suggestion');
     quickTags.forEach(tag => {
+        tag.setAttribute('role', 'button');
+        tag.setAttribute('tabindex', '0');
         tag.addEventListener('click', () => {
             filterByTag(tag.dataset.tag);
+        });
+        tag.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                filterByTag(tag.dataset.tag);
+            }
         });
     });
 
     // Edit modal quick tags
     const editTagSuggestions = document.querySelectorAll('#edit-tag-suggestions .tag-suggestion');
     editTagSuggestions.forEach(tag => {
-        tag.addEventListener('click', () => {
+        tag.setAttribute('role', 'button');
+        tag.setAttribute('tabindex', '0');
+        
+        const addTag = () => {
             const currentTags = editTagsInput.value.trim();
             const newTag = tag.dataset.tag;
 
@@ -450,13 +485,16 @@ function setupQuickTags() {
             }
 
             editTagsInput.focus();
+        };
+        
+        tag.addEventListener('click', addTag);
+        tag.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                addTag();
+            }
         });
     });
-}
-
-// Add card entrance animations
-function addCardAnimations() {
-    // Already handled by CSS animation with staggered delays
 }
 
 // Setup event listeners
@@ -505,6 +543,10 @@ function setupEventListeners() {
         if (e.target === editModal) closeEditModal();
     });
     editTagsInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') saveEdit();
+        if (e.key === 'Escape') closeEditModal();
+    });
+    editNotesInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') saveEdit();
         if (e.key === 'Escape') closeEditModal();
     });
