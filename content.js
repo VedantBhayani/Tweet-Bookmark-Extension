@@ -1,16 +1,31 @@
 // Tweet Bookmark Extension - Content Script
 // Runs on twitter.com and x.com
+// Optimized for performance with throttled observers and memory management
 
 (function () {
     'use strict';
 
     // Track which tweets already have our button
     const processedTweets = new Set();
+    let lastUrl = location.href;
+    let isProcessing = false;
+    let processingTimeout = null;
 
     // Extract tweet ID from URL
     function extractTweetId(url) {
         const match = url.match(/\/status\/(\d+)/);
         return match ? match[1] : null;
+    }
+
+    // Clear processed tweets when URL changes (navigation)
+    function checkUrlChange() {
+        if (location.href !== lastUrl) {
+            lastUrl = location.href;
+            // Clear cache on navigation to prevent memory buildup
+            if (processedTweets.size > 500) {
+                processedTweets.clear();
+            }
+        }
     }
 
     // Extract data from a tweet element
@@ -73,6 +88,7 @@
         btn.className = 'tweet-bookmark-btn';
         btn.innerHTML = '📌';
         btn.title = 'Save to Bookmarks';
+        btn.setAttribute('aria-label', 'Save tweet to bookmarks');
 
         btn.addEventListener('click', async (e) => {
             e.preventDefault();
@@ -104,12 +120,15 @@
 
         const overlay = document.createElement('div');
         overlay.className = 'tweet-bookmark-modal-overlay';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+        overlay.setAttribute('aria-labelledby', 'tweet-bookmark-modal-title');
 
         overlay.innerHTML = `
       <div class="tweet-bookmark-modal">
         <div class="tweet-bookmark-modal-header">
-          <h2 class="tweet-bookmark-modal-title">${isEdit ? '✏️ Edit Bookmark' : '📌 Save Tweet'}</h2>
-          <button class="tweet-bookmark-modal-close">&times;</button>
+          <h2 class="tweet-bookmark-modal-title" id="tweet-bookmark-modal-title">${isEdit ? '✏️ Edit Bookmark' : '📌 Save Tweet'}</h2>
+          <button class="tweet-bookmark-modal-close" aria-label="Close dialog">&times;</button>
         </div>
         <div class="tweet-bookmark-modal-body">
           <div class="tweet-bookmark-preview">
@@ -118,19 +137,20 @@
             <div class="tweet-bookmark-preview-content">${escapeHtml(tweetData.content.substring(0, 280))}${tweetData.content.length > 280 ? '...' : ''}</div>
           </div>
           <div class="tweet-bookmark-form-group">
-            <label class="tweet-bookmark-label">Tags</label>
+            <label class="tweet-bookmark-label" for="tweet-bookmark-tags">Tags</label>
             <input type="text" class="tweet-bookmark-input" id="tweet-bookmark-tags" 
                    placeholder="tech, ai, interesting" 
-                   value="${tweetData.tags ? tweetData.tags.join(', ') : ''}">
-            <div class="tweet-bookmark-quick-tags">
-              <span class="tweet-bookmark-quick-tag" data-tag="important">🔥 Important</span>
-              <span class="tweet-bookmark-quick-tag" data-tag="learn">📚 Learn</span>
-              <span class="tweet-bookmark-quick-tag" data-tag="tech">💻 Tech</span>
-              <span class="tweet-bookmark-quick-tag" data-tag="thread">🧵 Thread</span>
+                   value="${tweetData.tags ? tweetData.tags.join(', ') : ''}"
+                   aria-describedby="tweet-bookmark-tags-hint">
+            <div class="tweet-bookmark-quick-tags" role="group" aria-label="Quick add tags">
+              <span class="tweet-bookmark-quick-tag" data-tag="important" role="button" tabindex="0">🔥 Important</span>
+              <span class="tweet-bookmark-quick-tag" data-tag="learn" role="button" tabindex="0">📚 Learn</span>
+              <span class="tweet-bookmark-quick-tag" data-tag="tech" role="button" tabindex="0">💻 Tech</span>
+              <span class="tweet-bookmark-quick-tag" data-tag="thread" role="button" tabindex="0">🧵 Thread</span>
             </div>
           </div>
           <div class="tweet-bookmark-form-group">
-            <label class="tweet-bookmark-label">Notes (optional)</label>
+            <label class="tweet-bookmark-label" for="tweet-bookmark-notes">Notes (optional)</label>
             <input type="text" class="tweet-bookmark-input" id="tweet-bookmark-notes" 
                    placeholder="Why are you saving this?"
                    value="${tweetData.notes || ''}">
@@ -153,7 +173,10 @@
         const notesInput = overlay.querySelector('#tweet-bookmark-notes');
         const quickTags = overlay.querySelectorAll('.tweet-bookmark-quick-tag');
 
-        const closeModal = () => overlay.remove();
+        const closeModal = () => {
+            overlay.style.opacity = '0';
+            setTimeout(() => overlay.remove(), 150);
+        };
 
         closeBtn.addEventListener('click', closeModal);
         cancelBtn.addEventListener('click', closeModal);
@@ -163,7 +186,7 @@
 
         // Quick tag click handlers
         quickTags.forEach(tagEl => {
-            tagEl.addEventListener('click', () => {
+            const addTag = () => {
                 const tag = tagEl.dataset.tag;
                 const currentTags = tagsInput.value.trim();
 
@@ -177,6 +200,14 @@
                 }
 
                 tagsInput.focus();
+            };
+
+            tagEl.addEventListener('click', addTag);
+            tagEl.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    addTag();
+                }
             });
         });
 
@@ -230,9 +261,15 @@
         const toast = document.createElement('div');
         toast.className = 'tweet-bookmark-toast';
         toast.textContent = message;
+        toast.setAttribute('role', 'alert');
+        toast.setAttribute('aria-live', 'polite');
         document.body.appendChild(toast);
 
-        setTimeout(() => toast.remove(), 3000);
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(-50%) translateY(12px)';
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
     }
 
     // Escape HTML to prevent XSS
@@ -274,24 +311,33 @@
 
     // Process all visible tweets
     function processAllTweets() {
+        checkUrlChange();
         const tweets = document.querySelectorAll('article[data-testid="tweet"]');
         tweets.forEach(addButtonToTweet);
     }
 
-    // Observe for new tweets (infinite scroll)
+    // Observe for new tweets (infinite scroll) - optimized with throttling
     function observeNewTweets() {
         const observer = new MutationObserver((mutations) => {
-            let shouldProcess = false;
+            // Skip if already processing
+            if (isProcessing) return;
 
-            mutations.forEach(mutation => {
-                if (mutation.addedNodes.length > 0) {
-                    shouldProcess = true;
+            // Check if any nodes were added
+            const hasNewNodes = mutations.some(mutation => mutation.addedNodes.length > 0);
+
+            if (hasNewNodes) {
+                isProcessing = true;
+
+                // Clear existing timeout
+                if (processingTimeout) {
+                    clearTimeout(processingTimeout);
                 }
-            });
 
-            if (shouldProcess) {
-                // Debounce processing
-                setTimeout(processAllTweets, 100);
+                // Throttle processing to 250ms
+                processingTimeout = setTimeout(() => {
+                    processAllTweets();
+                    isProcessing = false;
+                }, 250);
             }
         });
 
