@@ -423,13 +423,16 @@
 
         // DMs show newest at BOTTOM, so we need to scroll UP to load older messages
         // First, go to the BOTTOM (newest messages)
-        viewport.scrollTop = viewport.scrollHeight;
-        await sleep(500);
+        viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'instant' });
+        await sleep(300);
 
         console.log('Tweet Bookmark: Starting at bottom, scrollTop:', viewport.scrollTop, 'scrollHeight:', viewport.scrollHeight);
 
         let iterations = 0;
-        let lastScrollTop = viewport.scrollTop;
+        const scrollStep = viewport.clientHeight * 0.7; // Slightly smaller steps for better coverage
+        let targetScrollTop = viewport.scrollHeight; // Track where we WANT to be
+        let stuckCount = 0; // Track if scroll is stuck/fighting
+        const MAX_STUCK = 3; // Max times we can be stuck at same position
 
         // Progressive scroll UP and scan
         while (noNewTweetsCount < MAX_STABLE_SCROLLS && iterations < MAX_ITERATIONS) {
@@ -458,17 +461,39 @@
                 break;
             }
 
-            // Scroll UP (negative direction) to load older messages
-            const scrollAmount = viewport.clientHeight * 0.8;
-            viewport.scrollTop = viewport.scrollTop - scrollAmount;
+            // Calculate next target position (scrolling UP toward 0)
+            targetScrollTop = Math.max(0, targetScrollTop - scrollStep);
 
-            console.log(`Tweet Bookmark: Iteration ${iterations}, scrollTop: ${viewport.scrollTop}, found: ${foundTweets.size}`);
+            // Force scroll to target position with instant behavior to avoid Twitter interference
+            viewport.scrollTo({ top: targetScrollTop, behavior: 'instant' });
+
+            console.log(`Tweet Bookmark: Iteration ${iterations}, target: ${targetScrollTop}, actual: ${viewport.scrollTop}, found: ${foundTweets.size}`);
 
             // Wait for new content to render
-            await sleep(500);
+            await sleep(400);
 
-            // Check if scroll actually moved (hit top)
-            if (Math.abs(viewport.scrollTop - lastScrollTop) < 10 && viewport.scrollTop <= 10) {
+            // Check if Twitter reset our scroll (we're not near our target)
+            const scrollDrift = Math.abs(viewport.scrollTop - targetScrollTop);
+            if (scrollDrift > 100) {
+                console.log(`Tweet Bookmark: Scroll was reset! Target: ${targetScrollTop}, Actual: ${viewport.scrollTop}, Drift: ${scrollDrift}`);
+                // Force scroll again
+                viewport.scrollTo({ top: targetScrollTop, behavior: 'instant' });
+                await sleep(200);
+
+                // If still not at target, track as stuck
+                if (Math.abs(viewport.scrollTop - targetScrollTop) > 100) {
+                    stuckCount++;
+                    if (stuckCount >= MAX_STUCK) {
+                        console.log('Tweet Bookmark: Scroll stuck, continuing with current position');
+                        // Use actual position as new target
+                        targetScrollTop = viewport.scrollTop;
+                        stuckCount = 0;
+                    }
+                }
+            }
+
+            // Check if we reached the top
+            if (targetScrollTop <= 0 || viewport.scrollTop <= 10) {
                 console.log('Tweet Bookmark: Reached top of conversation');
                 // Do one more scan at top
                 const finalCards = findTweetCardsInDM();
@@ -479,7 +504,6 @@
                 }
                 break;
             }
-            lastScrollTop = viewport.scrollTop;
         }
 
         // Restore scroll position
