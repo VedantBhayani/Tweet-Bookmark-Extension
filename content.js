@@ -356,6 +356,7 @@
 
         // Find all tweet cards in the DM conversation
         const tweetCards = findTweetCardsInDM();
+        console.log('Tweet Bookmark: Total tweet cards found:', tweetCards.length);
 
         if (tweetCards.length === 0) {
             showToast('No shared tweets found in this conversation');
@@ -363,10 +364,35 @@
         }
 
         // Filter to only tweets YOU sent (not received)
-        const mySharedTweets = tweetCards.filter(card => isTweetSentByMe(card));
+        const mySharedTweets = tweetCards.filter(card => {
+            const isMine = isTweetSentByMe(card);
+            console.log('Tweet Bookmark: Card sent by me?', isMine, card.tweetLink?.getAttribute('href'));
+            return isMine;
+        });
+
+        console.log('Tweet Bookmark: Tweets sent by me:', mySharedTweets.length);
 
         if (mySharedTweets.length === 0) {
-            showToast('No tweets that you shared were found');
+            // Show all tweets found if none detected as "mine" - let user decide
+            console.log('Tweet Bookmark: No tweets detected as sent by user, showing all tweets');
+            showToast(`Found ${tweetCards.length} tweets - showing all (couldn't detect which you sent)`);
+            // Fall through to show all tweets instead
+            const allTweetsData = [];
+            for (const card of tweetCards) {
+                const tweetData = extractTweetDataFromDMCard(card);
+                if (tweetData && tweetData.id) {
+                    const exists = await bookmarkExists(tweetData.id);
+                    allTweetsData.push({
+                        ...tweetData,
+                        alreadySaved: exists
+                    });
+                }
+            }
+            if (allTweetsData.length > 0) {
+                showDMBookmarkModal(allTweetsData, recipient);
+            } else {
+                showToast('No tweets to bookmark (could not extract data)');
+            }
             return;
         }
 
@@ -406,7 +432,13 @@
     // Find all tweet cards embedded in DM messages
     function findTweetCardsInDM() {
         const tweetCards = [];
-        const seenLinks = new Set();
+        const seenTweetIds = new Set(); // Use tweet ID for deduplication
+
+        // Helper to extract tweet ID from href
+        const getTweetIdFromHref = (href) => {
+            const match = href?.match(/\/status\/(\d+)/);
+            return match ? match[1] : null;
+        };
 
         // Strategy 1: Try data-testid containers (old format)
         const messageContainers = document.querySelectorAll('[data-testid="messageEntry"], [data-testid="cellInnerDiv"]');
@@ -416,8 +448,9 @@
                 const tweetLinks = container.querySelectorAll('a[href*="/status/"]');
                 for (const link of tweetLinks) {
                     const href = link.getAttribute('href');
-                    if (seenLinks.has(href)) continue;
-                    seenLinks.add(href);
+                    const tweetId = getTweetIdFromHref(href);
+                    if (!tweetId || seenTweetIds.has(tweetId)) continue;
+                    seenTweetIds.add(tweetId);
 
                     const cardWrapper = link.closest('[data-testid="card.wrapper"]') ||
                                        link.closest('article') ||
@@ -443,8 +476,9 @@
             const allTweetLinks = dmContentArea.querySelectorAll('a[href*="/status/"]');
             for (const link of allTweetLinks) {
                 const href = link.getAttribute('href');
-                if (seenLinks.has(href)) continue;
-                seenLinks.add(href);
+                const tweetId = getTweetIdFromHref(href);
+                if (!tweetId || seenTweetIds.has(tweetId)) continue;
+                seenTweetIds.add(tweetId);
 
                 // Find the tweet card wrapper by traversing up
                 // Look for a reasonable card-like container
@@ -494,8 +528,9 @@
                              tweet.parentElement?.querySelector('a[href*="/status/"]');
             if (tweetLink) {
                 const href = tweetLink.getAttribute('href');
-                if (seenLinks.has(href)) continue;
-                seenLinks.add(href);
+                const tweetId = getTweetIdFromHref(href);
+                if (!tweetId || seenTweetIds.has(tweetId)) continue;
+                seenTweetIds.add(tweetId);
 
                 const container = tweet.closest('[data-testid="messageEntry"]') ||
                                  tweet.closest('[data-testid="cellInnerDiv"]') ||
@@ -513,6 +548,7 @@
             }
         }
 
+        console.log('Tweet Bookmark: Found', tweetCards.length, 'tweet cards in DM');
         return tweetCards;
     }
 
@@ -670,9 +706,38 @@
             // Extract from URL if author not found
             if (!author && url) {
                 const urlMatch = url.match(/x\.com\/([^\/]+)\/status/);
-                if (urlMatch) {
+                if (urlMatch && urlMatch[1] !== 'i') {
+                    // Only use if it's not the /i/status/ format
                     author = '@' + urlMatch[1];
                 }
+            }
+
+            // If still no author, try to find it from text content in the card
+            if (!author || author === '@i') {
+                // Look for @username pattern in any link text
+                const allLinks = element.querySelectorAll('a');
+                for (const link of allLinks) {
+                    const text = link.textContent?.trim();
+                    if (text && text.startsWith('@') && text.length > 1 && !text.includes(' ')) {
+                        author = text;
+                        break;
+                    }
+                }
+            }
+
+            // If still no author, try to extract from any visible @mention
+            if (!author || author === '@i') {
+                const textContent = element.textContent || '';
+                const mentionMatch = textContent.match(/@([a-zA-Z0-9_]+)/);
+                if (mentionMatch && mentionMatch[1] !== 'i') {
+                    author = '@' + mentionMatch[1];
+                }
+            }
+
+            // Default to unknown if we couldn't find the author
+            if (!author || author === '@i') {
+                author = '@unknown';
+                authorName = 'Unknown Author';
             }
 
             return {
@@ -680,7 +745,7 @@
                 url: url,
                 content: content.substring(0, 500), // Limit content length
                 author: author,
-                authorName: authorName,
+                authorName: authorName || author,
                 tweetDate: '',
                 tags: [],
                 savedAt: Date.now()
