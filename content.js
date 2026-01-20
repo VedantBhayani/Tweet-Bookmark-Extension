@@ -1,9 +1,12 @@
 // Tweet Bookmark Extension - Content Script
 // Runs on twitter.com and x.com
-// Optimized for performance with throttled observers and memory management
+// Version: 2.1.0 - Fixed DM duplicate detection
 
 (function () {
     'use strict';
+
+    // VERSION CHECK - Log to confirm latest code is running
+    console.log('%c[Tweet Bookmark v2.1.0] Content script loaded', 'color: green; font-weight: bold');
 
     // Track which tweets already have our button
     const processedTweets = new Set();
@@ -440,6 +443,8 @@
 
     // Find all tweet cards embedded in DM messages
     function findTweetCardsInDM() {
+        console.log('%c[Tweet Bookmark v2.1.0] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
+
         // SIMPLE APPROACH: Find all unique tweet IDs first, then build card objects
         const tweetIdToLink = new Map(); // Map<tweetId, {link, messageContainer}>
 
@@ -457,11 +462,23 @@
                               document.querySelector('main') ||
                               document.body;
 
+        console.log('Tweet Bookmark: DM content area:', dmContentArea?.tagName, dmContentArea?.className);
+
         // Find ALL links to /status/ in the DM area
         const allStatusLinks = dmContentArea.querySelectorAll('a[href*="/status/"]');
 
-        console.log('Tweet Bookmark: Found', allStatusLinks.length, 'status links in DOM');
+        console.log('%c[Tweet Bookmark] Found ' + allStatusLinks.length + ' status links in DOM', 'color: orange; font-weight: bold');
 
+        // Log ALL links found for debugging
+        const allHrefs = [];
+        for (const link of allStatusLinks) {
+            const href = link.getAttribute('href');
+            allHrefs.push(href);
+        }
+        console.log('Tweet Bookmark: All hrefs found:', allHrefs);
+
+        // Extract unique tweet IDs
+        const allTweetIds = [];
         for (const link of allStatusLinks) {
             const href = link.getAttribute('href');
             const tweetId = getTweetIdFromHref(href);
@@ -471,8 +488,11 @@
                 continue;
             }
 
+            allTweetIds.push(tweetId);
+
             // Only keep the first occurrence of each tweet ID
             if (tweetIdToLink.has(tweetId)) {
+                console.log('Tweet Bookmark: Skipping duplicate tweet ID:', tweetId);
                 continue;
             }
 
@@ -528,7 +548,11 @@
             });
         }
 
-        console.log('Tweet Bookmark: Unique tweet cards:', tweetCards.length);
+        // Log summary
+        console.log('%c[Tweet Bookmark] All tweet IDs found: ' + allTweetIds.join(', '), 'color: purple');
+        console.log('%c[Tweet Bookmark] Unique tweet IDs (Map size): ' + tweetIdToLink.size, 'color: green; font-weight: bold');
+        console.log('%c[Tweet Bookmark] Final tweetCards array length: ' + tweetCards.length, 'color: green; font-weight: bold');
+
         tweetCards.forEach((card, i) => {
             console.log(`Tweet Bookmark: Card ${i}: ID=${card.tweetId}, href=${card.tweetLink.getAttribute('href')}`);
         });
