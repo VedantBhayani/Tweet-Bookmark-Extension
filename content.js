@@ -431,8 +431,9 @@
         let iterations = 0;
         const scrollStep = viewport.clientHeight * 0.7; // Slightly smaller steps for better coverage
         let targetScrollTop = viewport.scrollHeight; // Track where we WANT to be
-        let stuckCount = 0; // Track if scroll is stuck/fighting
-        const MAX_STUCK = 3; // Max times we can be stuck at same position
+        let minScrollReached = viewport.scrollHeight; // Track lowest position successfully reached
+        let consecutiveResets = 0; // Track consecutive resets at same target
+        const MAX_RESETS_AT_POSITION = 3; // Give up on a position after 3 failed attempts
 
         // Progressive scroll UP and scan
         while (noNewTweetsCount < MAX_STABLE_SCROLLS && iterations < MAX_ITERATIONS) {
@@ -452,7 +453,12 @@
                 showToast(`🔍 Found ${foundTweets.size} tweets... scrolling`);
                 noNewTweetsCount = 0;
             } else {
-                noNewTweetsCount++;
+                // Only count as "no new tweets" if we're in new territory (below minScrollReached)
+                // Don't count if we're in already-scanned area due to reset
+                if (viewport.scrollTop <= minScrollReached + scrollStep) {
+                    noNewTweetsCount++;
+                }
+                // If we're above minScrollReached (reset happened), don't increment - just keep trying
             }
 
             // Safety limit - max tweets to prevent infinite loops
@@ -472,23 +478,42 @@
             // Wait for new content to render
             await sleep(400);
 
+            // Update minimum scroll position reached (progress tracking)
+            if (viewport.scrollTop < minScrollReached) {
+                minScrollReached = viewport.scrollTop;
+                consecutiveResets = 0; // Made progress, reset counter
+            }
+
             // Check if Twitter reset our scroll (we're not near our target)
             const scrollDrift = Math.abs(viewport.scrollTop - targetScrollTop);
             if (scrollDrift > 100) {
-                console.log(`Tweet Bookmark: Scroll was reset! Target: ${targetScrollTop}, Actual: ${viewport.scrollTop}, Drift: ${scrollDrift}`);
-                // Force scroll again
+                console.log(`Tweet Bookmark: Scroll was reset! Target: ${targetScrollTop}, Actual: ${viewport.scrollTop}, Min reached: ${minScrollReached}`);
+
+                // Try to scroll back to target
                 viewport.scrollTo({ top: targetScrollTop, behavior: 'instant' });
                 await sleep(200);
 
-                // If still not at target, track as stuck
+                // Check if we're still being reset
                 if (Math.abs(viewport.scrollTop - targetScrollTop) > 100) {
-                    stuckCount++;
-                    if (stuckCount >= MAX_STUCK) {
-                        console.log('Tweet Bookmark: Scroll stuck, continuing with current position');
-                        // Use actual position as new target
-                        targetScrollTop = viewport.scrollTop;
-                        stuckCount = 0;
+                    consecutiveResets++;
+
+                    if (consecutiveResets >= MAX_RESETS_AT_POSITION) {
+                        // We truly can't reach this target - Twitter is blocking us
+                        // DON'T restart from reset position (already scanned)
+                        // Instead, check if we've made any progress at all
+                        if (minScrollReached < viewport.scrollHeight - scrollStep) {
+                            // We made some progress - try smaller steps from minScrollReached
+                            console.log(`Tweet Bookmark: Can't reach ${targetScrollTop}, trying smaller steps from ${minScrollReached}`);
+                            targetScrollTop = minScrollReached;
+                            consecutiveResets = 0;
+                        } else {
+                            // We're stuck at the very beginning - Twitter won't let us scroll
+                            console.log('Tweet Bookmark: Cannot scroll - Twitter blocking. Stopping scan.');
+                            break;
+                        }
                     }
+                } else {
+                    consecutiveResets = 0; // Successfully reached target after retry
                 }
             }
 
