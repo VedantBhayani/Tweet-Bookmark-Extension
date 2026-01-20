@@ -284,7 +284,10 @@
 
     // Check if current page is a DM conversation
     function checkIsDMPage() {
-        return /\/messages\/\d+/.test(location.pathname);
+        // Match both old and new DM URL patterns:
+        // - /messages/{id} (old format)
+        // - /i/chat/{id1}-{id2} (new format: x.com/i/chat/1289813681602142209-1687831766835556352)
+        return /\/(messages\/\d+|i\/chat\/[\d-]+)/.test(location.pathname);
     }
 
     // Extract recipient username from DM page
