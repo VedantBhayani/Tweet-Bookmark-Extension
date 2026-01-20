@@ -378,9 +378,17 @@
             showToast(`Found ${tweetCards.length} tweets - showing all (couldn't detect which you sent)`);
             // Fall through to show all tweets instead
             const allTweetsData = [];
+            const seenIdsInFallback = new Set();
             for (const card of tweetCards) {
                 const tweetData = extractTweetDataFromDMCard(card);
                 if (tweetData && tweetData.id) {
+                    // Extra deduplication safeguard
+                    if (seenIdsInFallback.has(tweetData.id)) {
+                        console.log('Tweet Bookmark: Skipping duplicate ID in fallback:', tweetData.id);
+                        continue;
+                    }
+                    seenIdsInFallback.add(tweetData.id);
+
                     const exists = await bookmarkExists(tweetData.id);
                     allTweetsData.push({
                         ...tweetData,
@@ -388,6 +396,7 @@
                     });
                 }
             }
+            console.log('Tweet Bookmark: Final unique tweets to show:', allTweetsData.length);
             if (allTweetsData.length > 0) {
                 showDMBookmarkModal(allTweetsData, recipient);
             } else {
@@ -431,124 +440,99 @@
 
     // Find all tweet cards embedded in DM messages
     function findTweetCardsInDM() {
-        const tweetCards = [];
-        const seenTweetIds = new Set(); // Use tweet ID for deduplication
+        // SIMPLE APPROACH: Find all unique tweet IDs first, then build card objects
+        const tweetIdToLink = new Map(); // Map<tweetId, {link, messageContainer}>
 
         // Helper to extract tweet ID from href
         const getTweetIdFromHref = (href) => {
-            const match = href?.match(/\/status\/(\d+)/);
+            if (!href) return null;
+            const match = href.match(/\/status\/(\d+)/);
             return match ? match[1] : null;
         };
 
-        // Strategy 1: Try data-testid containers (old format)
-        const messageContainers = document.querySelectorAll('[data-testid="messageEntry"], [data-testid="cellInnerDiv"]');
+        // Find the DM content area
+        const dmContentArea = document.querySelector('[data-testid="DmActivityViewport"]') ||
+                              document.querySelector('[data-testid="DmActivityContainer"]') ||
+                              document.querySelector('main[role="main"]') ||
+                              document.querySelector('main') ||
+                              document.body;
 
-        if (messageContainers.length > 0) {
-            for (const container of messageContainers) {
-                const tweetLinks = container.querySelectorAll('a[href*="/status/"]');
-                for (const link of tweetLinks) {
-                    const href = link.getAttribute('href');
-                    const tweetId = getTweetIdFromHref(href);
-                    if (!tweetId || seenTweetIds.has(tweetId)) continue;
-                    seenTweetIds.add(tweetId);
+        // Find ALL links to /status/ in the DM area
+        const allStatusLinks = dmContentArea.querySelectorAll('a[href*="/status/"]');
 
-                    const cardWrapper = link.closest('[data-testid="card.wrapper"]') ||
-                                       link.closest('article') ||
-                                       link.closest('[role="link"]') ||
-                                       link;
+        console.log('Tweet Bookmark: Found', allStatusLinks.length, 'status links in DOM');
 
-                    tweetCards.push({
-                        element: cardWrapper,
-                        messageContainer: container,
-                        tweetLink: link
-                    });
-                }
+        for (const link of allStatusLinks) {
+            const href = link.getAttribute('href');
+            const tweetId = getTweetIdFromHref(href);
+
+            if (!tweetId) {
+                console.log('Tweet Bookmark: Could not extract ID from:', href);
+                continue;
             }
-        }
 
-        // Strategy 2: Fallback for new /i/chat/ format - direct document search
-        if (tweetCards.length === 0) {
-            // Search entire DM content area for tweet links
-            const dmContentArea = document.querySelector('[data-testid="DmActivityViewport"]') ||
-                                  document.querySelector('main') ||
-                                  document.body;
+            // Only keep the first occurrence of each tweet ID
+            if (tweetIdToLink.has(tweetId)) {
+                continue;
+            }
 
-            const allTweetLinks = dmContentArea.querySelectorAll('a[href*="/status/"]');
-            for (const link of allTweetLinks) {
-                const href = link.getAttribute('href');
-                const tweetId = getTweetIdFromHref(href);
-                if (!tweetId || seenTweetIds.has(tweetId)) continue;
-                seenTweetIds.add(tweetId);
+            // Find the message container by walking up the DOM
+            let messageContainer = null;
+            let parent = link.parentElement;
 
-                // Find the tweet card wrapper by traversing up
-                // Look for a reasonable card-like container
-                let cardWrapper = link;
-                let messageContainer = null;
-                let parent = link.parentElement;
+            for (let i = 0; i < 15 && parent && parent !== dmContentArea; i++) {
+                // Look for common message container patterns
+                const role = parent.getAttribute('role');
+                const testId = parent.getAttribute('data-testid');
 
-                // Walk up to find a container that looks like a card (has reasonable size/structure)
-                for (let i = 0; i < 10 && parent; i++) {
-                    // Check for common card indicators
-                    if (parent.querySelector('img') || parent.querySelector('span')) {
-                        cardWrapper = parent;
-                    }
-                    // Stop at message boundary indicators
-                    if (parent.getAttribute('role') === 'listitem' ||
-                        parent.classList.contains('gap-2') ||
-                        parent.getAttribute('data-message-id')) {
-                        messageContainer = parent;
-                        cardWrapper = parent;
-                        break;
-                    }
-                    // Check for flex containers that might be message wrappers
-                    const style = window.getComputedStyle(parent);
-                    if (style.display === 'flex' && !messageContainer) {
+                if (role === 'listitem' ||
+                    role === 'article' ||
+                    testId === 'messageEntry' ||
+                    testId === 'cellInnerDiv' ||
+                    parent.getAttribute('data-message-id')) {
+                    messageContainer = parent;
+                    break;
+                }
+
+                // Also check for flex containers with specific alignment (message bubbles)
+                const style = window.getComputedStyle(parent);
+                if (style.display === 'flex' &&
+                    (style.justifyContent === 'flex-start' || style.justifyContent === 'flex-end')) {
+                    if (!messageContainer) {
                         messageContainer = parent;
                     }
-                    parent = parent.parentElement;
                 }
 
-                // If no message container found, use the card wrapper's parent
-                if (!messageContainer) {
-                    messageContainer = cardWrapper.parentElement || cardWrapper;
-                }
-
-                tweetCards.push({
-                    element: cardWrapper,
-                    messageContainer: messageContainer,
-                    tweetLink: link
-                });
+                parent = parent.parentElement;
             }
+
+            // Default to link's parent if no container found
+            if (!messageContainer) {
+                messageContainer = link.closest('div') || link.parentElement;
+            }
+
+            tweetIdToLink.set(tweetId, {
+                link: link,
+                messageContainer: messageContainer
+            });
         }
 
-        // Strategy 3: Also check for embedded tweet text elements
-        const embeddedTweets = document.querySelectorAll('[data-testid="tweetText"]');
-        for (const tweet of embeddedTweets) {
-            const tweetLink = tweet.closest('a[href*="/status/"]') ||
-                             tweet.parentElement?.querySelector('a[href*="/status/"]');
-            if (tweetLink) {
-                const href = tweetLink.getAttribute('href');
-                const tweetId = getTweetIdFromHref(href);
-                if (!tweetId || seenTweetIds.has(tweetId)) continue;
-                seenTweetIds.add(tweetId);
-
-                const container = tweet.closest('[data-testid="messageEntry"]') ||
-                                 tweet.closest('[data-testid="cellInnerDiv"]') ||
-                                 tweet.parentElement;
-
-                const cardWrapper = tweet.closest('[data-testid="card.wrapper"]') ||
-                                   tweet.closest('article') ||
-                                   tweet;
-
-                tweetCards.push({
-                    element: cardWrapper,
-                    messageContainer: container,
-                    tweetLink: tweetLink
-                });
-            }
+        // Convert to array format
+        const tweetCards = [];
+        for (const [tweetId, data] of tweetIdToLink) {
+            tweetCards.push({
+                tweetId: tweetId, // Store the ID directly for debugging
+                element: data.link.closest('div') || data.link,
+                messageContainer: data.messageContainer,
+                tweetLink: data.link
+            });
         }
 
-        console.log('Tweet Bookmark: Found', tweetCards.length, 'tweet cards in DM');
+        console.log('Tweet Bookmark: Unique tweet cards:', tweetCards.length);
+        tweetCards.forEach((card, i) => {
+            console.log(`Tweet Bookmark: Card ${i}: ID=${card.tweetId}, href=${card.tweetLink.getAttribute('href')}`);
+        });
+
         return tweetCards;
     }
 
@@ -661,89 +645,120 @@
     // Extract tweet data from a DM embedded tweet card
     function extractTweetDataFromDMCard(tweetCard) {
         try {
-            const { element, tweetLink } = tweetCard;
+            const { element, tweetLink, tweetId: storedTweetId, messageContainer } = tweetCard;
 
             // Get tweet URL from the link
             let url = '';
-            let tweetId = null;
+            let tweetId = storedTweetId; // Use pre-extracted ID if available
 
             if (tweetLink) {
                 const href = tweetLink.getAttribute('href');
                 if (href) {
                     url = href.startsWith('http') ? href : 'https://x.com' + href;
-                    tweetId = extractTweetId(url);
+                    if (!tweetId) {
+                        tweetId = extractTweetId(url);
+                    }
                 }
             }
 
-            if (!tweetId) return null;
-
-            // Try to extract content from the card preview
-            let content = '';
-            const textElement = element.querySelector('[data-testid="tweetText"]') ||
-                               element.querySelector('[dir="auto"]') ||
-                               element;
-            if (textElement) {
-                content = textElement.innerText || '';
+            if (!tweetId) {
+                console.log('Tweet Bookmark: No tweet ID for extraction');
+                return null;
             }
 
-            // Try to extract author info
+            // Try to extract content - search in multiple areas
+            let content = '';
+            const searchAreas = [element, messageContainer, tweetLink?.parentElement].filter(Boolean);
+
+            for (const area of searchAreas) {
+                if (content) break;
+
+                // Try specific tweet text first
+                let textEl = area.querySelector?.('[data-testid="tweetText"]');
+                if (!textEl) {
+                    // Try dir="auto" with lang attribute (actual text content)
+                    textEl = area.querySelector?.('[dir="auto"][lang]');
+                }
+                if (!textEl) {
+                    // Fallback to any dir="auto"
+                    textEl = area.querySelector?.('[dir="auto"]');
+                }
+
+                if (textEl) {
+                    content = textEl.innerText?.trim() || '';
+                }
+            }
+
+            // If still no content, try the link text itself
+            if (!content && tweetLink) {
+                content = tweetLink.innerText?.trim() || '';
+            }
+
+            // Try to extract author info - search more aggressively
             let author = '';
             let authorName = '';
 
-            // Look for author links or text in the card
-            const authorLink = element.querySelector('a[href^="/"]:not([href*="/status/"])');
-            if (authorLink) {
-                const href = authorLink.getAttribute('href');
-                if (href && href.match(/^\/[a-zA-Z0-9_]+$/)) {
-                    author = '@' + href.substring(1);
-                }
-                const nameSpan = authorLink.querySelector('span');
-                if (nameSpan) {
-                    authorName = nameSpan.innerText || '';
-                }
-            }
+            // Search in all available areas
+            for (const area of searchAreas) {
+                if (author && author !== '@i') break;
+                if (!area || !area.querySelectorAll) continue;
 
-            // Extract from URL if author not found
-            if (!author && url) {
-                const urlMatch = url.match(/x\.com\/([^\/]+)\/status/);
-                if (urlMatch && urlMatch[1] !== 'i') {
-                    // Only use if it's not the /i/status/ format
-                    author = '@' + urlMatch[1];
-                }
-            }
-
-            // If still no author, try to find it from text content in the card
-            if (!author || author === '@i') {
-                // Look for @username pattern in any link text
-                const allLinks = element.querySelectorAll('a');
-                for (const link of allLinks) {
-                    const text = link.textContent?.trim();
-                    if (text && text.startsWith('@') && text.length > 1 && !text.includes(' ')) {
-                        author = text;
+                // Look for profile links (not status links, not /i/)
+                const links = area.querySelectorAll('a[href^="/"]');
+                for (const link of links) {
+                    const href = link.getAttribute('href');
+                    // Valid username: starts with /, 1-15 chars, alphanumeric/underscore only
+                    if (href && /^\/[a-zA-Z0-9_]{1,15}$/.test(href) && href !== '/i' && !href.includes('/status')) {
+                        author = '@' + href.substring(1);
+                        const nameSpan = link.querySelector('span');
+                        if (nameSpan) {
+                            authorName = nameSpan.innerText?.trim() || '';
+                        }
                         break;
                     }
                 }
             }
 
-            // If still no author, try to extract from any visible @mention
-            if (!author || author === '@i') {
-                const textContent = element.textContent || '';
-                const mentionMatch = textContent.match(/@([a-zA-Z0-9_]+)/);
-                if (mentionMatch && mentionMatch[1] !== 'i') {
-                    author = '@' + mentionMatch[1];
+            // Extract from URL if author not found (but skip /i/status/ format)
+            if (!author && url) {
+                const urlMatch = url.match(/x\.com\/([a-zA-Z0-9_]{1,15})\/status/);
+                if (urlMatch && urlMatch[1] !== 'i') {
+                    author = '@' + urlMatch[1];
                 }
             }
 
-            // Default to unknown if we couldn't find the author
+            // Try to find @mentions in text content
+            if (!author || author === '@i') {
+                for (const area of searchAreas) {
+                    if (author && author !== '@i') break;
+                    if (!area) continue;
+
+                    const text = area.textContent || '';
+                    // Look for @username pattern
+                    const matches = text.match(/@([a-zA-Z0-9_]{1,15})/g);
+                    if (matches) {
+                        for (const match of matches) {
+                            if (match !== '@i') {
+                                author = match;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Default to unknown
             if (!author || author === '@i') {
                 author = '@unknown';
-                authorName = 'Unknown Author';
+                authorName = 'Tweet Author';
             }
+
+            console.log(`Tweet Bookmark: Extracted - ID: ${tweetId}, Author: ${author}, Content: ${content.substring(0, 50)}...`);
 
             return {
                 id: tweetId,
                 url: url,
-                content: content.substring(0, 500), // Limit content length
+                content: content.substring(0, 500),
                 author: author,
                 authorName: authorName || author,
                 tweetDate: '',
