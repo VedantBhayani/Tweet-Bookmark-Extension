@@ -1,12 +1,12 @@
 // Tweet Bookmark Extension - Content Script
 // Runs on twitter.com and x.com
-// Version: 2.1.0 - Fixed DM duplicate detection
+// Version: 2.2.0 - Progressive scroll scanning for DMs + improved author detection
 
 (function () {
     'use strict';
 
     // VERSION CHECK - Log to confirm latest code is running
-    console.log('%c[Tweet Bookmark v2.1.0] Content script loaded', 'color: green; font-weight: bold');
+    console.log('%c[Tweet Bookmark v2.2.0] Content script loaded', 'color: green; font-weight: bold');
 
     // Track which tweets already have our button
     const processedTweets = new Set();
@@ -17,6 +17,9 @@
     // DM scanning state
     let dmScanButton = null;
     let isDMPage = false;
+
+    // Helper: Sleep/delay function for async operations
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
     // Extract tweet ID from URL
     function extractTweetId(url) {
@@ -352,14 +355,140 @@
         }
     }
 
-    // Scan DM conversation for shared tweets
+    // Scan DM conversation for shared tweets with progressive scrolling
     async function scanDMForTweets() {
         const recipient = extractDMRecipient();
-        showToast('🔍 Scanning DM for shared tweets...');
 
-        // Find all tweet cards in the DM conversation
-        const tweetCards = findTweetCardsInDM();
-        console.log('Tweet Bookmark: Total tweet cards found:', tweetCards.length);
+        // Find the ACTUAL scrollable DM container (not <main>, but the inner scrollable div)
+        // Strategy: Find element with overflow-y scroll/auto that contains DM messages
+        let viewport = null;
+
+        // Try specific Twitter DM selectors first
+        const dmSelectors = [
+            '[data-testid="DmActivityViewport"]',
+            '[data-testid="DmScrollerContainer"]',
+            '[data-testid="DMDrawer"] [data-testid="ScrollSnap-List"]',
+            'section[role="region"] > div > div' // Common DM structure
+        ];
+
+        for (const selector of dmSelectors) {
+            const el = document.querySelector(selector);
+            if (el) {
+                const style = window.getComputedStyle(el);
+                if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+                    viewport = el;
+                    console.log('Tweet Bookmark: Found scrollable via selector:', selector);
+                    break;
+                }
+            }
+        }
+
+        // Fallback: Find any scrollable container that has tweet links inside
+        if (!viewport) {
+            const tweetLink = document.querySelector('a[href*="/status/"]');
+            if (tweetLink) {
+                let parent = tweetLink.parentElement;
+                for (let i = 0; i < 20 && parent; i++) {
+                    const style = window.getComputedStyle(parent);
+                    // Check if this element is scrollable AND has significant scroll height
+                    if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                        parent.scrollHeight > parent.clientHeight + 100) {
+                        viewport = parent;
+                        console.log('Tweet Bookmark: Found scrollable via parent walk, tag:', parent.tagName, 'scrollHeight:', parent.scrollHeight);
+                        break;
+                    }
+                    parent = parent.parentElement;
+                }
+            }
+        }
+
+        if (!viewport) {
+            console.log('Tweet Bookmark: Could not find scrollable viewport, trying document.scrollingElement');
+            viewport = document.scrollingElement || document.body;
+        }
+
+        console.log('Tweet Bookmark: Using viewport:', viewport.tagName, viewport.className?.substring(0, 50),
+                    'scrollHeight:', viewport.scrollHeight, 'clientHeight:', viewport.clientHeight);
+
+        // Show scanning progress
+        showToast('🔍 Scanning... scrolling through conversation');
+
+        const foundTweets = new Map(); // tweetId -> cardData
+        let noNewTweetsCount = 0;
+        const MAX_STABLE_SCROLLS = 5; // Stop after 5 scrolls with no new tweets
+        const MAX_ITERATIONS = 100; // Safety limit
+
+        // Save original scroll position
+        const originalScroll = viewport.scrollTop;
+
+        // DMs show newest at BOTTOM, so we need to scroll UP to load older messages
+        // First, go to the BOTTOM (newest messages)
+        viewport.scrollTop = viewport.scrollHeight;
+        await sleep(500);
+
+        console.log('Tweet Bookmark: Starting at bottom, scrollTop:', viewport.scrollTop, 'scrollHeight:', viewport.scrollHeight);
+
+        let iterations = 0;
+        let lastScrollTop = viewport.scrollTop;
+
+        // Progressive scroll UP and scan
+        while (noNewTweetsCount < MAX_STABLE_SCROLLS && iterations < MAX_ITERATIONS) {
+            iterations++;
+            const previousCount = foundTweets.size;
+
+            // Scan current viewport
+            const currentCards = findTweetCardsInDM();
+            for (const card of currentCards) {
+                if (card.tweetId && !foundTweets.has(card.tweetId)) {
+                    foundTweets.set(card.tweetId, card);
+                }
+            }
+
+            // Update progress toast if we found new tweets
+            if (foundTweets.size > previousCount) {
+                showToast(`🔍 Found ${foundTweets.size} tweets... scrolling`);
+                noNewTweetsCount = 0;
+            } else {
+                noNewTweetsCount++;
+            }
+
+            // Safety limit - max tweets to prevent infinite loops
+            if (foundTweets.size > 200) {
+                console.log('Tweet Bookmark: Hit 200 tweet limit, stopping scan');
+                break;
+            }
+
+            // Scroll UP (negative direction) to load older messages
+            const scrollAmount = viewport.clientHeight * 0.8;
+            viewport.scrollTop = viewport.scrollTop - scrollAmount;
+
+            console.log(`Tweet Bookmark: Iteration ${iterations}, scrollTop: ${viewport.scrollTop}, found: ${foundTweets.size}`);
+
+            // Wait for new content to render
+            await sleep(500);
+
+            // Check if scroll actually moved (hit top)
+            if (Math.abs(viewport.scrollTop - lastScrollTop) < 10 && viewport.scrollTop <= 10) {
+                console.log('Tweet Bookmark: Reached top of conversation');
+                // Do one more scan at top
+                const finalCards = findTweetCardsInDM();
+                for (const card of finalCards) {
+                    if (card.tweetId && !foundTweets.has(card.tweetId)) {
+                        foundTweets.set(card.tweetId, card);
+                    }
+                }
+                break;
+            }
+            lastScrollTop = viewport.scrollTop;
+        }
+
+        // Restore scroll position
+        viewport.scrollTop = originalScroll;
+
+        console.log(`Tweet Bookmark: Scan complete. Found ${foundTweets.size} unique tweets after ${iterations} scroll iterations`);
+
+        // Convert to array
+        const tweetCards = Array.from(foundTweets.values());
 
         if (tweetCards.length === 0) {
             showToast('No shared tweets found in this conversation');
@@ -367,10 +496,10 @@
         }
 
         // Filter to only tweets YOU sent (not received)
+        // Uses pre-captured isSentByMe status (captured when element was still in DOM)
         const mySharedTweets = tweetCards.filter(card => {
-            const isMine = isTweetSentByMe(card);
-            console.log('Tweet Bookmark: Card sent by me?', isMine, card.tweetLink?.getAttribute('href'));
-            return isMine;
+            console.log('Tweet Bookmark: Card sent by me?', card.isSentByMe, card.tweetLink?.getAttribute('href'));
+            return card.isSentByMe;
         });
 
         console.log('Tweet Bookmark: Tweets sent by me:', mySharedTweets.length);
@@ -443,7 +572,7 @@
 
     // Find all tweet cards embedded in DM messages
     function findTweetCardsInDM() {
-        console.log('%c[Tweet Bookmark v2.1.0] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
+        console.log('%c[Tweet Bookmark v2.2.0] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
 
         // SIMPLE APPROACH: Find all unique tweet IDs first, then build card objects
         const tweetIdToLink = new Map(); // Map<tweetId, {link, messageContainer}>
@@ -540,12 +669,15 @@
         // Convert to array format
         const tweetCards = [];
         for (const [tweetId, data] of tweetIdToLink) {
-            tweetCards.push({
+            const cardData = {
                 tweetId: tweetId, // Store the ID directly for debugging
                 element: data.link.closest('div') || data.link,
                 messageContainer: data.messageContainer,
                 tweetLink: data.link
-            });
+            };
+            // Capture sent status NOW while element is in DOM (before Twitter's virtualization removes it)
+            cardData.isSentByMe = checkIfSentByMe(cardData);
+            tweetCards.push(cardData);
         }
 
         // Log summary
@@ -561,7 +693,8 @@
     }
 
     // Determine if a message containing a tweet was sent by the current user
-    function isTweetSentByMe(tweetCard) {
+    // Called at scan time when element is still in DOM to capture positioning data
+    function checkIfSentByMe(tweetCard) {
         const messageContainer = tweetCard.messageContainer;
         const cardElement = tweetCard.element;
 
@@ -722,7 +855,7 @@
             let author = '';
             let authorName = '';
 
-            // Search in all available areas
+            // Strategy A: Search in immediate areas for profile links
             for (const area of searchAreas) {
                 if (author && author !== '@i') break;
                 if (!area || !area.querySelectorAll) continue;
@@ -743,15 +876,57 @@
                 }
             }
 
-            // Extract from URL if author not found (but skip /i/status/ format)
-            if (!author && url) {
-                const urlMatch = url.match(/x\.com\/([a-zA-Z0-9_]{1,15})\/status/);
-                if (urlMatch && urlMatch[1] !== 'i') {
-                    author = '@' + urlMatch[1];
+            // Strategy B: Search wider DOM tree for [data-testid="User-Name"]
+            if (!author || author === '@i') {
+                let searchRoot = element || messageContainer;
+                for (let i = 0; i < 10 && searchRoot && searchRoot.parentElement; i++) {
+                    searchRoot = searchRoot.parentElement;
+                    const userNameEl = searchRoot.querySelector('[data-testid="User-Name"] a');
+                    if (userNameEl) {
+                        const href = userNameEl.getAttribute('href');
+                        if (href && /^\/[a-zA-Z0-9_]{1,15}$/.test(href) && href !== '/i') {
+                            author = '@' + href.substring(1);
+                            const nameSpan = userNameEl.querySelector('span');
+                            if (nameSpan) {
+                                authorName = nameSpan.innerText?.trim() || '';
+                            }
+                            break;
+                        }
+                    }
                 }
             }
 
-            // Try to find @mentions in text content
+            // Strategy C: Find profile image and get parent link
+            if (!author || author === '@i') {
+                let searchRoot = element || messageContainer;
+                for (let i = 0; i < 10 && searchRoot && searchRoot.parentElement; i++) {
+                    searchRoot = searchRoot.parentElement;
+                    const profileImgs = searchRoot.querySelectorAll('img[src*="profile_images"]');
+                    for (const img of profileImgs) {
+                        const parentLink = img.closest('a[href^="/"]');
+                        if (parentLink) {
+                            const href = parentLink.getAttribute('href');
+                            if (href && /^\/[a-zA-Z0-9_]{1,15}$/.test(href) && href !== '/i') {
+                                author = '@' + href.substring(1);
+                                break;
+                            }
+                        }
+                    }
+                    if (author && author !== '@i') break;
+                }
+            }
+
+            // Strategy D: Extract from URL if author not found (but skip /i/status/ format)
+            if (!author || author === '@i') {
+                if (url) {
+                    const urlMatch = url.match(/x\.com\/([a-zA-Z0-9_]{1,15})\/status/);
+                    if (urlMatch && urlMatch[1] !== 'i') {
+                        author = '@' + urlMatch[1];
+                    }
+                }
+            }
+
+            // Strategy E: Try to find @mentions in text content (first @mention is often the author)
             if (!author || author === '@i') {
                 for (const area of searchAreas) {
                     if (author && author !== '@i') break;
@@ -768,6 +943,14 @@
                             }
                         }
                     }
+                }
+            }
+
+            // Strategy F: Extract first @mention from tweet content itself
+            if ((!author || author === '@i') && content) {
+                const firstMention = content.match(/@([a-zA-Z0-9_]{1,15})/);
+                if (firstMention && firstMention[1] !== 'i') {
+                    author = '@' + firstMention[1];
                 }
             }
 
