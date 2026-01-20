@@ -406,30 +406,24 @@
     // Find all tweet cards embedded in DM messages
     function findTweetCardsInDM() {
         const tweetCards = [];
+        const seenLinks = new Set();
 
-        // Twitter embeds tweets as cards with links to /status/
-        // Look for various tweet card selectors used in DMs
-        const cardSelectors = [
-            '[data-testid="tweetText"]',
-            'a[href*="/status/"]',
-            '[data-testid="card.wrapper"]',
-            '[data-testid="tweet"]'
-        ];
-
-        // First, find all message groups in the DM
+        // Strategy 1: Try data-testid containers (old format)
         const messageContainers = document.querySelectorAll('[data-testid="messageEntry"], [data-testid="cellInnerDiv"]');
 
-        for (const container of messageContainers) {
-            // Check for tweet links within this message
-            const tweetLinks = container.querySelectorAll('a[href*="/status/"]');
-            for (const link of tweetLinks) {
-                // Get the parent container that represents the whole tweet card
-                const cardWrapper = link.closest('[data-testid="card.wrapper"]') ||
-                                   link.closest('article') ||
-                                   link.closest('[role="link"]') ||
-                                   link;
+        if (messageContainers.length > 0) {
+            for (const container of messageContainers) {
+                const tweetLinks = container.querySelectorAll('a[href*="/status/"]');
+                for (const link of tweetLinks) {
+                    const href = link.getAttribute('href');
+                    if (seenLinks.has(href)) continue;
+                    seenLinks.add(href);
 
-                if (cardWrapper && !tweetCards.includes(cardWrapper)) {
+                    const cardWrapper = link.closest('[data-testid="card.wrapper"]') ||
+                                       link.closest('article') ||
+                                       link.closest('[role="link"]') ||
+                                       link;
+
                     tweetCards.push({
                         element: cardWrapper,
                         messageContainer: container,
@@ -439,22 +433,83 @@
             }
         }
 
-        // Also check for standalone tweet embeds
+        // Strategy 2: Fallback for new /i/chat/ format - direct document search
+        if (tweetCards.length === 0) {
+            // Search entire DM content area for tweet links
+            const dmContentArea = document.querySelector('[data-testid="DmActivityViewport"]') ||
+                                  document.querySelector('main') ||
+                                  document.body;
+
+            const allTweetLinks = dmContentArea.querySelectorAll('a[href*="/status/"]');
+            for (const link of allTweetLinks) {
+                const href = link.getAttribute('href');
+                if (seenLinks.has(href)) continue;
+                seenLinks.add(href);
+
+                // Find the tweet card wrapper by traversing up
+                // Look for a reasonable card-like container
+                let cardWrapper = link;
+                let messageContainer = null;
+                let parent = link.parentElement;
+
+                // Walk up to find a container that looks like a card (has reasonable size/structure)
+                for (let i = 0; i < 10 && parent; i++) {
+                    // Check for common card indicators
+                    if (parent.querySelector('img') || parent.querySelector('span')) {
+                        cardWrapper = parent;
+                    }
+                    // Stop at message boundary indicators
+                    if (parent.getAttribute('role') === 'listitem' ||
+                        parent.classList.contains('gap-2') ||
+                        parent.getAttribute('data-message-id')) {
+                        messageContainer = parent;
+                        cardWrapper = parent;
+                        break;
+                    }
+                    // Check for flex containers that might be message wrappers
+                    const style = window.getComputedStyle(parent);
+                    if (style.display === 'flex' && !messageContainer) {
+                        messageContainer = parent;
+                    }
+                    parent = parent.parentElement;
+                }
+
+                // If no message container found, use the card wrapper's parent
+                if (!messageContainer) {
+                    messageContainer = cardWrapper.parentElement || cardWrapper;
+                }
+
+                tweetCards.push({
+                    element: cardWrapper,
+                    messageContainer: messageContainer,
+                    tweetLink: link
+                });
+            }
+        }
+
+        // Strategy 3: Also check for embedded tweet text elements
         const embeddedTweets = document.querySelectorAll('[data-testid="tweetText"]');
         for (const tweet of embeddedTweets) {
-            const container = tweet.closest('[data-testid="messageEntry"], [data-testid="cellInnerDiv"]');
-            if (container) {
-                const tweetLink = container.querySelector('a[href*="/status/"]');
-                if (tweetLink) {
-                    const existing = tweetCards.find(tc => tc.element === tweet || tc.tweetLink === tweetLink);
-                    if (!existing) {
-                        tweetCards.push({
-                            element: tweet,
-                            messageContainer: container,
-                            tweetLink: tweetLink
-                        });
-                    }
-                }
+            const tweetLink = tweet.closest('a[href*="/status/"]') ||
+                             tweet.parentElement?.querySelector('a[href*="/status/"]');
+            if (tweetLink) {
+                const href = tweetLink.getAttribute('href');
+                if (seenLinks.has(href)) continue;
+                seenLinks.add(href);
+
+                const container = tweet.closest('[data-testid="messageEntry"]') ||
+                                 tweet.closest('[data-testid="cellInnerDiv"]') ||
+                                 tweet.parentElement;
+
+                const cardWrapper = tweet.closest('[data-testid="card.wrapper"]') ||
+                                   tweet.closest('article') ||
+                                   tweet;
+
+                tweetCards.push({
+                    element: cardWrapper,
+                    messageContainer: container,
+                    tweetLink: tweetLink
+                });
             }
         }
 
@@ -464,63 +519,103 @@
     // Determine if a message containing a tweet was sent by the current user
     function isTweetSentByMe(tweetCard) {
         const messageContainer = tweetCard.messageContainer;
-        if (!messageContainer) return false;
+        const cardElement = tweetCard.element;
 
-        // Twitter DM styling: sent messages are typically on the right side
-        // and have different background colors/styling
+        // Strategy 1: Check for data-testid attributes that indicate sent messages
+        if (messageContainer) {
+            const sentIndicators = messageContainer.querySelectorAll('[data-testid*="sent"], [data-testid*="outgoing"]');
+            if (sentIndicators.length > 0) return true;
+        }
 
-        // Method 1: Check for data-testid attributes that indicate sent messages
-        const sentIndicators = messageContainer.querySelectorAll('[data-testid*="sent"], [data-testid*="outgoing"]');
-        if (sentIndicators.length > 0) return true;
+        // Check the card element itself
+        const sentMarker = cardElement?.closest('[data-testid*="sent"]') ||
+                          cardElement?.closest('[data-testid*="outgoing"]');
+        if (sentMarker) return true;
 
-        // Method 2: Check for styling classes that indicate sent messages
-        // Sent messages typically have a colored background (blue/accent color)
-        const messageElement = messageContainer.querySelector('[data-testid="messageEntry"]') || messageContainer;
-        const computedStyle = window.getComputedStyle(messageElement);
+        // Strategy 2: Check positioning (sent messages typically on right)
+        const targetElement = cardElement || messageContainer;
+        if (targetElement) {
+            const rect = targetElement.getBoundingClientRect();
+            const viewportWidth = window.innerWidth;
 
-        // Method 3: Check positioning - sent messages are typically flex-end/right aligned
-        const parentStyle = messageContainer.parentElement ?
-            window.getComputedStyle(messageContainer.parentElement) : null;
-
-        if (parentStyle) {
-            const justifyContent = parentStyle.justifyContent;
-            const alignItems = parentStyle.alignItems;
-            if (justifyContent === 'flex-end' || alignItems === 'flex-end') {
+            // If the element is positioned in the right 40% of the viewport, it's likely sent
+            if (rect.left > viewportWidth * 0.5 && rect.right > viewportWidth * 0.6) {
                 return true;
+            }
+
+            // Check parent container positioning
+            const parentRect = targetElement.parentElement?.getBoundingClientRect();
+            if (parentRect && parentRect.width > 100) {
+                const isRightAligned = rect.right > (parentRect.left + parentRect.width * 0.6);
+                if (isRightAligned) return true;
             }
         }
 
-        // Method 4: Check if message bubble has the "sent" styling
-        // Twitter uses specific background colors for sent vs received
-        const bubble = messageContainer.querySelector('[dir="auto"]')?.closest('div');
-        if (bubble) {
-            const bgColor = window.getComputedStyle(bubble).backgroundColor;
+        // Strategy 3: Check for flex alignment indicators
+        let element = cardElement || messageContainer;
+        for (let i = 0; i < 8 && element; i++) {
+            const style = window.getComputedStyle(element);
+
+            // Sent messages often use flex-end or right alignment
+            if (style.justifyContent === 'flex-end' ||
+                style.alignItems === 'flex-end' ||
+                style.alignSelf === 'flex-end' ||
+                style.marginLeft === 'auto' ||
+                style.marginInlineStart === 'auto') {
+                return true;
+            }
+
+            // Check for flex-direction: row-reverse (common in RTL-style sent messages)
+            if (style.display === 'flex' && style.flexDirection === 'row-reverse') {
+                return true;
+            }
+
+            element = element.parentElement;
+        }
+
+        // Strategy 4: Check for blue bubble background (Twitter's sent message color)
+        element = cardElement || messageContainer;
+        for (let i = 0; i < 8 && element; i++) {
+            const bg = window.getComputedStyle(element).backgroundColor;
             // Twitter's sent message color is typically blue/accent (rgb(29, 155, 240))
-            if (bgColor.includes('29, 155, 240') || bgColor.includes('1d9bf0')) {
+            // Also check for variations with different spacing
+            if (bg.includes('29, 155, 240') ||
+                bg.includes('29,155,240') ||
+                bg.includes('1d9bf0') ||
+                bg.includes('rgb(29, 155, 240)')) {
                 return true;
             }
+            element = element.parentElement;
         }
 
-        // Method 5: Check the container's flex alignment
-        let parent = messageContainer;
-        for (let i = 0; i < 5; i++) {
-            if (!parent.parentElement) break;
-            parent = parent.parentElement;
-            const style = window.getComputedStyle(parent);
-            if (style.display === 'flex') {
-                if (style.justifyContent === 'flex-end') {
-                    return true;
+        // Strategy 5: Check for specific CSS classes that might indicate sent status
+        element = cardElement || messageContainer;
+        for (let i = 0; i < 5 && element; i++) {
+            const classList = element.classList;
+            if (classList) {
+                // Check for common class name patterns indicating sent/outgoing
+                for (const className of classList) {
+                    const lowerClass = className.toLowerCase();
+                    if (lowerClass.includes('sent') ||
+                        lowerClass.includes('outgoing') ||
+                        lowerClass.includes('self') ||
+                        lowerClass.includes('mine')) {
+                        return true;
+                    }
                 }
-                if (style.flexDirection === 'row-reverse') {
+            }
+            element = element.parentElement;
+        }
+
+        // Strategy 6: Check if message bubble styling indicates sent (for new format)
+        if (messageContainer) {
+            const bubble = messageContainer.querySelector('[dir="auto"]')?.closest('div');
+            if (bubble) {
+                const bgColor = window.getComputedStyle(bubble).backgroundColor;
+                if (bgColor.includes('29, 155, 240') || bgColor.includes('1d9bf0')) {
                     return true;
                 }
             }
-        }
-
-        // Method 6: Check for margin-left: auto pattern (right-aligned)
-        const msgStyle = window.getComputedStyle(messageContainer);
-        if (msgStyle.marginLeft === 'auto' || msgStyle.marginInlineStart === 'auto') {
-            return true;
         }
 
         // Default: assume it's received if we can't determine
