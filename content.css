@@ -861,3 +861,297 @@
     font-size: 22px;
   }
 }
+
+/* ==========================================
+   DM Scan Progress Panel Styles
+   ========================================== */
+
+.dm-scan-progress-panel {
+  position: fixed;
+  bottom: 90px;
+  right: 24px;
+  width: 320px;
+  background: rgba(20, 20, 20, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  padding: 16px;
+  z-index: 99998;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4),
+              0 0 0 1px rgba(255, 255, 255, 0.05),
+              0 0 40px var(--accent-dim);
+  animation: panelSlideIn 0.3s var(--spring-bounce);
+}
+
+.dm-scan-progress-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.15) 0%,
+    transparent 50%,
+    rgba(230, 167, 86, 0.15) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.dm-scan-progress-panel.paused {
+  border-color: #fbbf24;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4),
+              0 0 0 1px rgba(251, 191, 36, 0.2),
+              0 0 40px rgba(251, 191, 36, 0.15);
+}
+
+@keyframes panelSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.progress-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fafafa;
+}
+
+.progress-stats {
+  font-size: 13px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.progress-stats .tweets-count {
+  font-weight: 700;
+}
+
+.progress-bar-container {
+  position: relative;
+  height: 8px;
+  background: var(--glass-bg);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent) 0%, #d4944a 100%);
+  border-radius: 4px;
+  transition: width 0.2s ease;
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.progress-percent {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  font-weight: 600;
+  color: #0c0c0c;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+}
+
+.progress-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.progress-controls button {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: #b8b8b8;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s var(--spring-bounce);
+}
+
+.progress-controls .pause-btn:hover {
+  background: rgba(251, 191, 36, 0.15);
+  border-color: #fbbf24;
+  color: #fbbf24;
+}
+
+.progress-controls .cancel-btn:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.progress-details {
+  font-size: 11px;
+  color: #6b7280;
+  text-align: center;
+}
+
+.scroll-position {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+/* ==========================================
+   Filter Tabs Styles
+   ========================================== */
+
+.dm-filter-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 4px;
+  background: var(--glass-bg);
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+}
+
+.dm-filter-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #8a8a8a;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s var(--spring-bounce);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.dm-filter-tab:hover {
+  color: #fafafa;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.dm-filter-tab.active {
+  background: linear-gradient(135deg, var(--accent) 0%, #d4944a 100%);
+  color: #0c0c0c;
+  font-weight: 600;
+}
+
+.dm-filter-tab .tab-count {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.dm-filter-tab.active .tab-count {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+/* ==========================================
+   Tweet Type Badges Styles
+   ========================================== */
+
+.dm-tweet-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.tweet-type-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.tweet-type-badge.media {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.tweet-type-badge.quote {
+  background: rgba(168, 85, 247, 0.15);
+  color: #a855f7;
+}
+
+.tweet-type-badge.thread {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.tweet-sent-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tweet-sent-badge.sent {
+  background: rgba(230, 167, 86, 0.15);
+  color: var(--accent);
+}
+
+.tweet-sent-badge.received {
+  background: rgba(107, 114, 128, 0.15);
+  color: #6b7280;
+}
+
+.already-saved-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(40, 167, 69, 0.15);
+  color: #28a745;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Responsive adjustments for progress panel */
+@media (max-width: 600px) {
+  .dm-scan-progress-panel {
+    bottom: 80px;
+    right: 16px;
+    left: 16px;
+    width: auto;
+  }
+
+  .dm-filter-tabs {
+    flex-wrap: wrap;
+  }
+
+  .dm-filter-tab {
+    flex-basis: calc(50% - 3px);
+  }
+}

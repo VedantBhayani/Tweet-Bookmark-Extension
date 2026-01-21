@@ -1,12 +1,12 @@
 // Tweet Bookmark Extension - Content Script
 // Runs on twitter.com and x.com
-// Version: 2.2.0 - Progressive scroll scanning for DMs + improved author detection
+// Version: 2.3.0 - Robust DM Scanner for 1000+ tweets with pause/resume
 
 (function () {
     'use strict';
 
     // VERSION CHECK - Log to confirm latest code is running
-    console.log('%c[Tweet Bookmark v2.2.0] Content script loaded', 'color: green; font-weight: bold');
+    console.log('%c[Tweet Bookmark v2.3.0] Content script loaded', 'color: green; font-weight: bold');
 
     // Track which tweets already have our button
     const processedTweets = new Set();
@@ -17,6 +17,28 @@
     // DM scanning state
     let dmScanButton = null;
     let isDMPage = false;
+
+    // Robust DM scan state management for 1000+ tweets
+    let dmScanState = {
+        isScanning: false,
+        isPaused: false,
+        isCancelled: false,
+        foundTweets: new Map(),
+        scrollProgress: 0,
+        currentIteration: 0,
+        maxIterations: 500,
+        startTime: null,
+        lastCheckpoint: null,
+        viewport: null,
+        recipient: '',
+        // Adaptive scrolling state
+        consecutiveEmptyScrolls: 0,
+        scrollStepMultiplier: 0.7,
+        scrollDelay: 400
+    };
+
+    // Scan progress panel element reference
+    let scanProgressPanel = null;
 
     // Helper: Sleep/delay function for async operations
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -355,12 +377,264 @@
         }
     }
 
+    // Reset scan state to initial values
+    function resetScanState() {
+        dmScanState.isScanning = false;
+        dmScanState.isPaused = false;
+        dmScanState.isCancelled = false;
+        dmScanState.foundTweets.clear();
+        dmScanState.scrollProgress = 0;
+        dmScanState.currentIteration = 0;
+        dmScanState.startTime = null;
+        dmScanState.lastCheckpoint = null;
+        dmScanState.viewport = null;
+        dmScanState.recipient = '';
+        dmScanState.consecutiveEmptyScrolls = 0;
+        dmScanState.scrollStepMultiplier = 0.7;
+        dmScanState.scrollDelay = 400;
+    }
+
+    // Create floating progress panel for scan
+    function createScanProgressPanel() {
+        if (scanProgressPanel) {
+            scanProgressPanel.remove();
+        }
+
+        scanProgressPanel = document.createElement('div');
+        scanProgressPanel.className = 'dm-scan-progress-panel';
+        scanProgressPanel.innerHTML = `
+            <div class="progress-header">
+                <span class="progress-title">Scanning DM...</span>
+                <span class="progress-stats">Found: <span class="tweets-count">0</span> tweets</span>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar-fill"></div>
+                <span class="progress-percent">0%</span>
+            </div>
+            <div class="progress-controls">
+                <button class="pause-btn" aria-label="Pause scan">⏸️ Pause</button>
+                <button class="cancel-btn" aria-label="Cancel scan">✖️ Cancel</button>
+            </div>
+            <div class="progress-details">
+                <span class="scroll-position">Starting scan...</span>
+            </div>
+        `;
+
+        document.body.appendChild(scanProgressPanel);
+
+        // Wire up button event handlers
+        const pauseBtn = scanProgressPanel.querySelector('.pause-btn');
+        const cancelBtn = scanProgressPanel.querySelector('.cancel-btn');
+
+        pauseBtn.addEventListener('click', () => {
+            if (dmScanState.isPaused) {
+                // Resume
+                dmScanState.isPaused = false;
+                pauseBtn.textContent = '⏸️ Pause';
+                updateScanProgress({ status: 'scanning' });
+            } else {
+                // Pause
+                dmScanState.isPaused = true;
+                pauseBtn.textContent = '▶️ Resume';
+                updateScanProgress({ status: 'paused' });
+            }
+        });
+
+        cancelBtn.addEventListener('click', () => {
+            dmScanState.isCancelled = true;
+            dmScanState.isPaused = false; // Unpause to allow loop to exit
+        });
+
+        return scanProgressPanel;
+    }
+
+    // Remove progress panel
+    function removeScanProgressPanel() {
+        if (scanProgressPanel) {
+            scanProgressPanel.remove();
+            scanProgressPanel = null;
+        }
+    }
+
+    // Update progress panel with current state
+    function updateScanProgress({ tweetsFound, scrollPercent, iteration, status }) {
+        if (!scanProgressPanel) return;
+
+        const tweetsCountEl = scanProgressPanel.querySelector('.tweets-count');
+        const progressFill = scanProgressPanel.querySelector('.progress-bar-fill');
+        const progressPercent = scanProgressPanel.querySelector('.progress-percent');
+        const scrollPosition = scanProgressPanel.querySelector('.scroll-position');
+        const titleEl = scanProgressPanel.querySelector('.progress-title');
+
+        if (tweetsFound !== undefined) {
+            tweetsCountEl.textContent = tweetsFound;
+        }
+
+        if (scrollPercent !== undefined) {
+            const percent = Math.min(100, Math.max(0, scrollPercent));
+            progressFill.style.width = `${percent}%`;
+            progressPercent.textContent = `${Math.round(percent)}%`;
+        }
+
+        if (iteration !== undefined) {
+            scrollPosition.textContent = `Iteration ${iteration} / ${dmScanState.maxIterations}`;
+        }
+
+        if (status === 'paused') {
+            titleEl.textContent = '⏸️ Scan Paused';
+            scanProgressPanel.classList.add('paused');
+        } else if (status === 'scanning') {
+            titleEl.textContent = '🔍 Scanning DM...';
+            scanProgressPanel.classList.remove('paused');
+        } else if (status === 'completing') {
+            titleEl.textContent = '✨ Completing...';
+        }
+    }
+
+    // Calculate scroll progress percentage
+    function calculateScrollProgress(viewport, targetScrollTop, totalScrollHeight) {
+        if (!viewport || totalScrollHeight <= 0) return 0;
+        // We scroll from bottom (scrollHeight) to top (0)
+        // Progress = how far we've scrolled up from bottom
+        const scrolledDistance = totalScrollHeight - targetScrollTop;
+        return (scrolledDistance / totalScrollHeight) * 100;
+    }
+
+    // Check if scanning should continue
+    function shouldContinueScanning() {
+        return dmScanState.isScanning &&
+               !dmScanState.isCancelled &&
+               dmScanState.currentIteration < dmScanState.maxIterations;
+    }
+
+    // Wait for resume when paused
+    function waitForResume() {
+        return new Promise(resolve => {
+            const checkInterval = setInterval(() => {
+                if (!dmScanState.isPaused || dmScanState.isCancelled) {
+                    clearInterval(checkInterval);
+                    resolve();
+                }
+            }, 100);
+        });
+    }
+
+    // Finalize scan (called on complete, cancel, or interrupt)
+    function finalizeScan(reason) {
+        const tweets = Array.from(dmScanState.foundTweets.values());
+        const recipient = dmScanState.recipient;
+
+        removeScanProgressPanel();
+
+        if (tweets.length > 0) {
+            showToast(`Scan ${reason}. Found ${tweets.length} tweets.`);
+            // Process and show modal with found tweets
+            processScanResults(tweets, recipient);
+        } else {
+            showToast(`Scan ${reason}. No tweets found.`);
+        }
+
+        resetScanState();
+    }
+
+    // Process scan results and show modal
+    async function processScanResults(tweetCards, recipient) {
+        // Filter to only tweets YOU sent (not received)
+        const mySharedTweets = tweetCards.filter(card => {
+            console.log('Tweet Bookmark: Card sent by me?', card.isSentByMe, card.tweetLink?.getAttribute('href'));
+            return card.isSentByMe;
+        });
+
+        console.log('Tweet Bookmark: Tweets sent by me:', mySharedTweets.length);
+
+        let tweetsToShow = mySharedTweets;
+        let showAllFallback = false;
+
+        if (mySharedTweets.length === 0) {
+            // Show all tweets found if none detected as "mine" - let user decide
+            console.log('Tweet Bookmark: No tweets detected as sent by user, showing all tweets');
+            showToast(`Found ${tweetCards.length} tweets - showing all (couldn't detect which you sent)`);
+            tweetsToShow = tweetCards;
+            showAllFallback = true;
+        }
+
+        // Extract tweet data from cards
+        const tweetsData = [];
+        const seenIds = new Set();
+
+        for (const card of tweetsToShow) {
+            const tweetData = extractTweetDataFromDMCard(card);
+            if (tweetData && tweetData.id) {
+                // Deduplicate
+                if (seenIds.has(tweetData.id)) {
+                    console.log('Tweet Bookmark: Skipping duplicate ID:', tweetData.id);
+                    continue;
+                }
+                seenIds.add(tweetData.id);
+
+                // Check if already bookmarked
+                const exists = await bookmarkExists(tweetData.id);
+                tweetsData.push({
+                    ...tweetData,
+                    alreadySaved: exists,
+                    isSentByMe: card.isSentByMe,
+                    tweetType: card.tweetType || 'regular',
+                    hasMedia: card.hasMedia || false,
+                    mediaCount: card.mediaCount || 0,
+                    isQuote: card.isQuote || false,
+                    isThread: card.isThread || false
+                });
+            }
+        }
+
+        console.log('Tweet Bookmark: Final unique tweets to show:', tweetsData.length);
+
+        if (tweetsData.length > 0) {
+            showDMBookmarkModal(tweetsData, recipient);
+        } else {
+            showToast('No tweets to bookmark (could not extract data)');
+        }
+    }
+
+    // Detect tweet type from card element
+    function detectTweetType(cardElement, tweetLink) {
+        const href = tweetLink?.href || tweetLink?.getAttribute('href') || '';
+        const cardContent = cardElement?.textContent || '';
+
+        const hasMedia = !!(cardElement?.querySelector('img[src*="pbs.twimg"], video, [data-testid="tweetPhoto"]'));
+        const hasQuote = href.includes('/status/') && !!(cardElement?.querySelector('[data-testid="tweet"] [data-testid="tweet"], [data-testid="quoteTweet"]'));
+        const mediaCount = cardElement?.querySelectorAll('img[src*="pbs.twimg"], [data-testid="tweetPhoto"]').length || 0;
+        const isThread = cardContent.includes('Show this thread') || !!(cardElement?.querySelector('[aria-label*="thread"]'));
+
+        let type = 'regular';
+        if (hasQuote) {
+            type = 'quote';
+        } else if (hasMedia) {
+            type = 'media';
+        } else if (isThread) {
+            type = 'thread';
+        }
+
+        return {
+            type,
+            hasMedia,
+            hasQuote,
+            mediaCount,
+            isThread
+        };
+    }
+
     // Scan DM conversation for shared tweets with progressive scrolling
     async function scanDMForTweets() {
+        // Prevent multiple concurrent scans
+        if (dmScanState.isScanning) {
+            showToast('Scan already in progress');
+            return;
+        }
+
         const recipient = extractDMRecipient();
 
         // Find the ACTUAL scrollable DM container (not <main>, but the inner scrollable div)
-        // Strategy: Find element with overflow-y scroll/auto that contains DM messages
         let viewport = null;
 
         // Try specific Twitter DM selectors first
@@ -368,7 +642,7 @@
             '[data-testid="DmActivityViewport"]',
             '[data-testid="DmScrollerContainer"]',
             '[data-testid="DMDrawer"] [data-testid="ScrollSnap-List"]',
-            'section[role="region"] > div > div' // Common DM structure
+            'section[role="region"] > div > div'
         ];
 
         for (const selector of dmSelectors) {
@@ -390,7 +664,6 @@
                 let parent = tweetLink.parentElement;
                 for (let i = 0; i < 20 && parent; i++) {
                     const style = window.getComputedStyle(parent);
-                    // Check if this element is scrollable AND has significant scroll height
                     if ((style.overflowY === 'auto' || style.overflowY === 'scroll') &&
                         parent.scrollHeight > parent.clientHeight + 100) {
                         viewport = parent;
@@ -410,110 +683,146 @@
         console.log('Tweet Bookmark: Using viewport:', viewport.tagName, viewport.className?.substring(0, 50),
                     'scrollHeight:', viewport.scrollHeight, 'clientHeight:', viewport.clientHeight);
 
-        // Show scanning progress
-        showToast('🔍 Scanning... scrolling through conversation');
+        // Initialize scan state
+        resetScanState();
+        dmScanState.isScanning = true;
+        dmScanState.startTime = Date.now();
+        dmScanState.viewport = viewport;
+        dmScanState.recipient = recipient;
 
-        const foundTweets = new Map(); // tweetId -> cardData
+        // Create and show progress panel
+        createScanProgressPanel();
+        updateScanProgress({ tweetsFound: 0, scrollPercent: 0, iteration: 0, status: 'scanning' });
+
+        // Constants for robust scanning
+        const MAX_STABLE_SCROLLS = 10;  // More tolerance for sparse areas
+        const MAX_TWEETS = 1500;        // Hard safety limit for 1000+ tweets
         let noNewTweetsCount = 0;
-        const MAX_STABLE_SCROLLS = 5; // Stop after 5 scrolls with no new tweets
-        const MAX_ITERATIONS = 100; // Safety limit
 
         // Save original scroll position
         const originalScroll = viewport.scrollTop;
+        const totalScrollHeight = viewport.scrollHeight;
 
         // DMs show newest at BOTTOM, so we need to scroll UP to load older messages
-        // First, go to the BOTTOM (newest messages)
         viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'instant' });
         await sleep(300);
 
         console.log('Tweet Bookmark: Starting at bottom, scrollTop:', viewport.scrollTop, 'scrollHeight:', viewport.scrollHeight);
 
-        let iterations = 0;
-        const scrollStep = viewport.clientHeight * 0.7; // Slightly smaller steps for better coverage
-        let targetScrollTop = viewport.scrollHeight; // Track where we WANT to be
-        let minScrollReached = viewport.scrollHeight; // Track lowest position successfully reached
-        let consecutiveResets = 0; // Track consecutive resets at same target
-        const MAX_RESETS_AT_POSITION = 3; // Give up on a position after 3 failed attempts
+        let scrollStep = viewport.clientHeight * dmScanState.scrollStepMultiplier;
+        let targetScrollTop = viewport.scrollHeight;
+        let minScrollReached = viewport.scrollHeight;
+        let consecutiveResets = 0;
+        const MAX_RESETS_AT_POSITION = 3;
+        let lastProgressUpdate = Date.now();
 
         // Progressive scroll UP and scan
-        while (noNewTweetsCount < MAX_STABLE_SCROLLS && iterations < MAX_ITERATIONS) {
-            iterations++;
-            const previousCount = foundTweets.size;
+        while (shouldContinueScanning() && noNewTweetsCount < MAX_STABLE_SCROLLS) {
+            // Check for pause
+            if (dmScanState.isPaused) {
+                await waitForResume();
+                if (dmScanState.isCancelled) break;
+            }
+
+            dmScanState.currentIteration++;
+            const previousCount = dmScanState.foundTweets.size;
 
             // Scan current viewport
             const currentCards = findTweetCardsInDM();
             for (const card of currentCards) {
-                if (card.tweetId && !foundTweets.has(card.tweetId)) {
-                    foundTweets.set(card.tweetId, card);
+                if (card.tweetId && !dmScanState.foundTweets.has(card.tweetId)) {
+                    // Detect tweet type
+                    const typeInfo = detectTweetType(card.element, card.tweetLink);
+                    card.tweetType = typeInfo.type;
+                    card.hasMedia = typeInfo.hasMedia;
+                    card.mediaCount = typeInfo.mediaCount;
+                    card.isQuote = typeInfo.hasQuote;
+                    card.isThread = typeInfo.isThread;
+
+                    dmScanState.foundTweets.set(card.tweetId, card);
                 }
             }
 
-            // Update progress toast if we found new tweets
-            if (foundTweets.size > previousCount) {
-                showToast(`🔍 Found ${foundTweets.size} tweets... scrolling`);
+            // Update progress (throttled to avoid UI jank)
+            const now = Date.now();
+            if (now - lastProgressUpdate > 100) {
+                const scrollProgress = calculateScrollProgress(viewport, targetScrollTop, totalScrollHeight);
+                updateScanProgress({
+                    tweetsFound: dmScanState.foundTweets.size,
+                    scrollPercent: scrollProgress,
+                    iteration: dmScanState.currentIteration
+                });
+                lastProgressUpdate = now;
+            }
+
+            // Check if we found new tweets
+            if (dmScanState.foundTweets.size > previousCount) {
                 noNewTweetsCount = 0;
+                dmScanState.consecutiveEmptyScrolls = 0;
             } else {
-                // Only count as "no new tweets" if we're in new territory (below minScrollReached)
-                // Don't count if we're in already-scanned area due to reset
                 if (viewport.scrollTop <= minScrollReached + scrollStep) {
                     noNewTweetsCount++;
+                    dmScanState.consecutiveEmptyScrolls++;
                 }
-                // If we're above minScrollReached (reset happened), don't increment - just keep trying
+            }
+
+            // Adaptive scrolling: adjust step size based on consecutive empty scrolls
+            if (dmScanState.consecutiveEmptyScrolls >= 5) {
+                dmScanState.scrollStepMultiplier = 0.3;
+                scrollStep = viewport.clientHeight * 0.3;
+            } else if (dmScanState.consecutiveEmptyScrolls >= 3) {
+                dmScanState.scrollStepMultiplier = 0.5;
+                scrollStep = viewport.clientHeight * 0.5;
             }
 
             // Safety limit - max tweets to prevent infinite loops
-            if (foundTweets.size > 200) {
-                console.log('Tweet Bookmark: Hit 200 tweet limit, stopping scan');
+            if (dmScanState.foundTweets.size > MAX_TWEETS) {
+                console.log(`Tweet Bookmark: Hit ${MAX_TWEETS} tweet limit, stopping scan`);
                 break;
             }
 
             // Calculate next target position (scrolling UP toward 0)
             targetScrollTop = Math.max(0, targetScrollTop - scrollStep);
 
-            // Force scroll to target position with instant behavior to avoid Twitter interference
+            // Force scroll to target position
             viewport.scrollTo({ top: targetScrollTop, behavior: 'instant' });
 
-            console.log(`Tweet Bookmark: Iteration ${iterations}, target: ${targetScrollTop}, actual: ${viewport.scrollTop}, found: ${foundTweets.size}`);
+            console.log(`Tweet Bookmark: Iteration ${dmScanState.currentIteration}, target: ${targetScrollTop}, actual: ${viewport.scrollTop}, found: ${dmScanState.foundTweets.size}`);
 
-            // Wait for new content to render
-            await sleep(400);
+            // Wait for new content to render (adaptive delay)
+            await sleep(dmScanState.scrollDelay);
 
-            // Update minimum scroll position reached (progress tracking)
+            // Update minimum scroll position reached
             if (viewport.scrollTop < minScrollReached) {
                 minScrollReached = viewport.scrollTop;
-                consecutiveResets = 0; // Made progress, reset counter
+                consecutiveResets = 0;
             }
 
-            // Check if Twitter reset our scroll (we're not near our target)
+            // Check if Twitter reset our scroll
             const scrollDrift = Math.abs(viewport.scrollTop - targetScrollTop);
             if (scrollDrift > 100) {
                 console.log(`Tweet Bookmark: Scroll was reset! Target: ${targetScrollTop}, Actual: ${viewport.scrollTop}, Min reached: ${minScrollReached}`);
 
-                // Try to scroll back to target
                 viewport.scrollTo({ top: targetScrollTop, behavior: 'instant' });
                 await sleep(200);
 
-                // Check if we're still being reset
                 if (Math.abs(viewport.scrollTop - targetScrollTop) > 100) {
                     consecutiveResets++;
 
                     if (consecutiveResets >= MAX_RESETS_AT_POSITION) {
-                        // We truly can't reach this target - Twitter is blocking us
-                        // DON'T restart from reset position (already scanned)
-                        // Instead, check if we've made any progress at all
                         if (minScrollReached < viewport.scrollHeight - scrollStep) {
-                            // We made some progress - try smaller steps from minScrollReached
                             console.log(`Tweet Bookmark: Can't reach ${targetScrollTop}, trying smaller steps from ${minScrollReached}`);
                             targetScrollTop = minScrollReached;
                             consecutiveResets = 0;
+                            // Reduce scroll step for difficult areas
+                            scrollStep = viewport.clientHeight * 0.3;
                         } else {
-                            // We're stuck at the very beginning - Twitter won't let us scroll
                             console.log('Tweet Bookmark: Cannot scroll - Twitter blocking. Stopping scan.');
                             break;
                         }
                     }
                 } else {
-                    consecutiveResets = 0; // Successfully reached target after retry
+                    consecutiveResets = 0;
                 }
             }
 
@@ -523,105 +832,45 @@
                 // Do one more scan at top
                 const finalCards = findTweetCardsInDM();
                 for (const card of finalCards) {
-                    if (card.tweetId && !foundTweets.has(card.tweetId)) {
-                        foundTweets.set(card.tweetId, card);
+                    if (card.tweetId && !dmScanState.foundTweets.has(card.tweetId)) {
+                        const typeInfo = detectTweetType(card.element, card.tweetLink);
+                        card.tweetType = typeInfo.type;
+                        card.hasMedia = typeInfo.hasMedia;
+                        card.mediaCount = typeInfo.mediaCount;
+                        card.isQuote = typeInfo.hasQuote;
+                        card.isThread = typeInfo.isThread;
+                        dmScanState.foundTweets.set(card.tweetId, card);
                     }
                 }
                 break;
+            }
+
+            // Yield to UI thread periodically
+            if (dmScanState.currentIteration % 10 === 0) {
+                await new Promise(r => setTimeout(r, 0));
             }
         }
 
         // Restore scroll position
         viewport.scrollTop = originalScroll;
 
-        console.log(`Tweet Bookmark: Scan complete. Found ${foundTweets.size} unique tweets after ${iterations} scroll iterations`);
+        const scanDuration = ((Date.now() - dmScanState.startTime) / 1000).toFixed(1);
+        console.log(`Tweet Bookmark: Scan complete. Found ${dmScanState.foundTweets.size} unique tweets in ${scanDuration}s after ${dmScanState.currentIteration} iterations`);
 
-        // Convert to array
-        const tweetCards = Array.from(foundTweets.values());
-
-        if (tweetCards.length === 0) {
-            showToast('No shared tweets found in this conversation');
-            return;
+        // Determine completion reason
+        let reason = 'completed';
+        if (dmScanState.isCancelled) {
+            reason = 'cancelled';
         }
 
-        // Filter to only tweets YOU sent (not received)
-        // Uses pre-captured isSentByMe status (captured when element was still in DOM)
-        const mySharedTweets = tweetCards.filter(card => {
-            console.log('Tweet Bookmark: Card sent by me?', card.isSentByMe, card.tweetLink?.getAttribute('href'));
-            return card.isSentByMe;
-        });
-
-        console.log('Tweet Bookmark: Tweets sent by me:', mySharedTweets.length);
-
-        if (mySharedTweets.length === 0) {
-            // Show all tweets found if none detected as "mine" - let user decide
-            console.log('Tweet Bookmark: No tweets detected as sent by user, showing all tweets');
-            showToast(`Found ${tweetCards.length} tweets - showing all (couldn't detect which you sent)`);
-            // Fall through to show all tweets instead
-            const allTweetsData = [];
-            const seenIdsInFallback = new Set();
-            for (const card of tweetCards) {
-                const tweetData = extractTweetDataFromDMCard(card);
-                if (tweetData && tweetData.id) {
-                    // Extra deduplication safeguard
-                    if (seenIdsInFallback.has(tweetData.id)) {
-                        console.log('Tweet Bookmark: Skipping duplicate ID in fallback:', tweetData.id);
-                        continue;
-                    }
-                    seenIdsInFallback.add(tweetData.id);
-
-                    const exists = await bookmarkExists(tweetData.id);
-                    allTweetsData.push({
-                        ...tweetData,
-                        alreadySaved: exists
-                    });
-                }
-            }
-            console.log('Tweet Bookmark: Final unique tweets to show:', allTweetsData.length);
-            if (allTweetsData.length > 0) {
-                showDMBookmarkModal(allTweetsData, recipient);
-            } else {
-                showToast('No tweets to bookmark (could not extract data)');
-            }
-            return;
-        }
-
-        // Extract tweet data from cards
-        const tweetsData = [];
-        for (const card of mySharedTweets) {
-            const tweetData = extractTweetDataFromDMCard(card);
-            if (tweetData && tweetData.id) {
-                // Check if already bookmarked
-                const exists = await bookmarkExists(tweetData.id);
-                tweetsData.push({
-                    ...tweetData,
-                    alreadySaved: exists
-                });
-            }
-        }
-
-        // Deduplicate by tweet ID
-        const uniqueTweets = [];
-        const seenIds = new Set();
-        for (const tweet of tweetsData) {
-            if (!seenIds.has(tweet.id)) {
-                seenIds.add(tweet.id);
-                uniqueTweets.push(tweet);
-            }
-        }
-
-        if (uniqueTweets.length === 0) {
-            showToast('No tweets to bookmark (could not extract data)');
-            return;
-        }
-
-        // Show confirmation modal
-        showDMBookmarkModal(uniqueTweets, recipient);
+        // Finalize the scan
+        updateScanProgress({ status: 'completing' });
+        finalizeScan(reason);
     }
 
     // Find all tweet cards embedded in DM messages
     function findTweetCardsInDM() {
-        console.log('%c[Tweet Bookmark v2.2.0] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
+        console.log('%c[Tweet Bookmark v2.3.0] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
 
         // SIMPLE APPROACH: Find all unique tweet IDs first, then build card objects
         const tweetIdToLink = new Map(); // Map<tweetId, {link, messageContainer}>
@@ -1036,6 +1285,11 @@
         const newTweets = tweets.filter(t => !t.alreadySaved);
         const savedCount = tweets.length - newTweets.length;
 
+        // Calculate counts for filter tabs
+        const sentTweets = tweets.filter(t => t.isSentByMe);
+        const receivedTweets = tweets.filter(t => !t.isSentByMe);
+        const mediaTweets = tweets.filter(t => t.hasMedia || t.tweetType === 'media');
+
         const overlay = document.createElement('div');
         overlay.className = 'tweet-bookmark-modal-overlay';
         overlay.setAttribute('role', 'dialog');
@@ -1043,6 +1297,28 @@
         overlay.setAttribute('aria-labelledby', 'dm-bookmark-modal-title');
 
         const tag = `dm-${recipient}`;
+
+        // Helper to get type badge HTML
+        const getTypeBadge = (tweet) => {
+            const badges = [];
+            if (tweet.tweetType === 'media' || tweet.hasMedia) {
+                badges.push('<span class="tweet-type-badge media" title="Has media">📷</span>');
+            }
+            if (tweet.tweetType === 'quote' || tweet.isQuote) {
+                badges.push('<span class="tweet-type-badge quote" title="Quote tweet">💬</span>');
+            }
+            if (tweet.tweetType === 'thread' || tweet.isThread) {
+                badges.push('<span class="tweet-type-badge thread" title="Thread">🧵</span>');
+            }
+            return badges.join('');
+        };
+
+        // Helper to get sent/received badge
+        const getSentBadge = (tweet) => {
+            return tweet.isSentByMe
+                ? '<span class="tweet-sent-badge sent">You shared</span>'
+                : '<span class="tweet-sent-badge received">Received</span>';
+        };
 
         overlay.innerHTML = `
       <div class="tweet-bookmark-modal tweet-bookmark-dm-modal">
@@ -1053,22 +1329,45 @@
         <div class="tweet-bookmark-modal-body">
           <div class="dm-bookmark-summary">
             <div class="dm-bookmark-count">
-              Found <strong>${tweets.length}</strong> tweet${tweets.length === 1 ? '' : 's'} you shared with <strong>${escapeHtml(recipient)}</strong>
+              Found <strong>${tweets.length}</strong> tweet${tweets.length === 1 ? '' : 's'} in conversation with <strong>${escapeHtml(recipient)}</strong>
             </div>
             ${savedCount > 0 ? `<div class="dm-bookmark-saved-note">(${savedCount} already bookmarked)</div>` : ''}
           </div>
 
+          <div class="dm-filter-tabs" role="tablist">
+            <button class="dm-filter-tab active" data-filter="all" role="tab" aria-selected="true">
+              All <span class="tab-count">${tweets.length}</span>
+            </button>
+            <button class="dm-filter-tab" data-filter="sent" role="tab" aria-selected="false">
+              Sent <span class="tab-count">${sentTweets.length}</span>
+            </button>
+            <button class="dm-filter-tab" data-filter="received" role="tab" aria-selected="false">
+              Received <span class="tab-count">${receivedTweets.length}</span>
+            </button>
+            <button class="dm-filter-tab" data-filter="media" role="tab" aria-selected="false">
+              Media <span class="tab-count">${mediaTweets.length}</span>
+            </button>
+          </div>
+
           <div class="dm-tweet-preview-list">
             ${tweets.map((tweet, index) => `
-              <div class="dm-tweet-preview-item ${tweet.alreadySaved ? 'already-saved' : ''}" data-index="${index}">
+              <div class="dm-tweet-preview-item ${tweet.alreadySaved ? 'already-saved' : ''}"
+                   data-index="${index}"
+                   data-type="${tweet.tweetType || 'regular'}"
+                   data-sent="${tweet.isSentByMe ? 'true' : 'false'}"
+                   data-has-media="${tweet.hasMedia ? 'true' : 'false'}">
                 <div class="dm-tweet-checkbox">
                   <input type="checkbox" id="dm-tweet-${index}" ${tweet.alreadySaved ? 'disabled' : 'checked'}>
                 </div>
                 <div class="dm-tweet-info">
-                  <div class="dm-tweet-author">${escapeHtml(tweet.author)}</div>
+                  <div class="dm-tweet-meta">
+                    <span class="dm-tweet-author">${escapeHtml(tweet.author)}</span>
+                    ${getTypeBadge(tweet)}
+                    ${getSentBadge(tweet)}
+                  </div>
                   <div class="dm-tweet-content">${escapeHtml(tweet.content.substring(0, 100))}${tweet.content.length > 100 ? '...' : ''}</div>
-                  ${tweet.alreadySaved ? '<div class="dm-tweet-saved-badge">Already saved</div>' : ''}
                 </div>
+                ${tweet.alreadySaved ? '<span class="already-saved-badge">✓ Saved</span>' : ''}
               </div>
             `).join('')}
           </div>
@@ -1110,18 +1409,55 @@
         const progressFill = overlay.querySelector('.dm-progress-fill');
         const progressText = overlay.querySelector('.dm-progress-text');
         const checkboxes = overlay.querySelectorAll('.dm-tweet-preview-item:not(.already-saved) input[type="checkbox"]');
+        const filterTabs = overlay.querySelectorAll('.dm-filter-tab');
+        const tweetItems = overlay.querySelectorAll('.dm-tweet-preview-item');
 
         const closeModal = () => {
             overlay.style.opacity = '0';
             setTimeout(() => overlay.remove(), 150);
         };
 
-        // Update save button count based on checked items
+        // Update save button count based on checked items (respecting current filter)
         const updateSaveButtonCount = () => {
             const checkedCount = overlay.querySelectorAll('.dm-tweet-preview-item:not(.already-saved) input[type="checkbox"]:checked').length;
             saveBtn.textContent = `Save ${checkedCount} Tweet${checkedCount === 1 ? '' : 's'}`;
             saveBtn.disabled = checkedCount === 0;
         };
+
+        // Filter tab click handler
+        const handleFilterClick = (e) => {
+            const filter = e.target.closest('.dm-filter-tab')?.dataset.filter;
+            if (!filter) return;
+
+            // Update active tab
+            filterTabs.forEach(tab => {
+                tab.classList.remove('active');
+                tab.setAttribute('aria-selected', 'false');
+            });
+            e.target.closest('.dm-filter-tab').classList.add('active');
+            e.target.closest('.dm-filter-tab').setAttribute('aria-selected', 'true');
+
+            // Filter items
+            tweetItems.forEach(item => {
+                const isSent = item.dataset.sent === 'true';
+                const hasMedia = item.dataset.hasMedia === 'true' || item.dataset.type === 'media';
+
+                let show = true;
+                if (filter === 'sent') {
+                    show = isSent;
+                } else if (filter === 'received') {
+                    show = !isSent;
+                } else if (filter === 'media') {
+                    show = hasMedia;
+                }
+
+                item.style.display = show ? '' : 'none';
+            });
+        };
+
+        filterTabs.forEach(tab => {
+            tab.addEventListener('click', handleFilterClick);
+        });
 
         closeBtn.addEventListener('click', closeModal);
         cancelBtn.addEventListener('click', closeModal);
@@ -1180,6 +1516,12 @@
                         savedAt: Date.now()
                     };
                     delete bookmark.alreadySaved;
+                    delete bookmark.isSentByMe;
+                    delete bookmark.tweetType;
+                    delete bookmark.hasMedia;
+                    delete bookmark.mediaCount;
+                    delete bookmark.isQuote;
+                    delete bookmark.isThread;
 
                     await saveBookmark(bookmark);
                     savedCount++;
@@ -1301,6 +1643,25 @@
         });
     }
 
+    // Handle tab visibility change for graceful scan interruption
+    function setupVisibilityHandler() {
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && dmScanState.isScanning && !dmScanState.isPaused) {
+                // Auto-pause on tab switch
+                dmScanState.isPaused = true;
+                updateScanProgress({ status: 'paused' });
+
+                // Update pause button if panel exists
+                const pauseBtn = scanProgressPanel?.querySelector('.pause-btn');
+                if (pauseBtn) {
+                    pauseBtn.textContent = '▶️ Resume';
+                }
+
+                console.log('Tweet Bookmark: Scan auto-paused due to tab switch');
+            }
+        });
+    }
+
     // Initialize
     function init() {
         console.log('Tweet Bookmark: Extension loaded');
@@ -1308,6 +1669,8 @@
         observeNewTweets();
         // Check if we're on a DM page on initial load
         handleDMPage();
+        // Setup visibility handler for graceful interruption
+        setupVisibilityHandler();
     }
 
     // Run when DOM is ready
