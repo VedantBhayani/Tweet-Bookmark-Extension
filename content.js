@@ -1,12 +1,12 @@
 // Tweet Bookmark Extension - Content Script
 // Runs on twitter.com and x.com
-// Version: 2.3.0 - Robust DM Scanner for 1000+ tweets with pause/resume
+// Version: 2.5.0 - Wait-for-content DM Scanner for improved tweet discovery
 
 (function () {
     'use strict';
 
     // VERSION CHECK - Log to confirm latest code is running
-    console.log('%c[Tweet Bookmark v2.3.0] Content script loaded', 'color: green; font-weight: bold');
+    console.log('%c[Tweet Bookmark v2.5.0] Content script loaded', 'color: green; font-weight: bold');
 
     // Track which tweets already have our button
     const processedTweets = new Set();
@@ -33,8 +33,12 @@
         recipient: '',
         // Adaptive scrolling state
         consecutiveEmptyScrolls: 0,
-        scrollStepMultiplier: 0.7,
-        scrollDelay: 400
+        scrollStepMultiplier: 0.5,
+        scrollDelay: 400,
+        // Loading-aware scanning config
+        loadingCheckEnabled: true,
+        maxLoadingWaitMs: 15000,
+        lastScrollHeight: 0
     };
 
     // Scan progress panel element reference
@@ -390,7 +394,7 @@
         dmScanState.viewport = null;
         dmScanState.recipient = '';
         dmScanState.consecutiveEmptyScrolls = 0;
-        dmScanState.scrollStepMultiplier = 0.7;
+        dmScanState.scrollStepMultiplier = 0.5;
         dmScanState.scrollDelay = 400;
     }
 
@@ -624,6 +628,148 @@
         };
     }
 
+    // Detect if Twitter is currently loading content in the viewport
+    function isTwitterLoading(viewport) {
+        if (!viewport) return false;
+
+        // Strategy 1: Check for spinner elements (Twitter's loading indicators)
+        const spinnerSelectors = [
+            '[data-testid="spinner"]',
+            '[role="progressbar"]',
+            '[data-testid="loading"]',
+            'svg[aria-label*="Loading"]',
+            '[aria-label*="Loading"]'
+        ];
+
+        for (const selector of spinnerSelectors) {
+            const spinner = viewport.querySelector(selector) || document.querySelector(selector);
+            if (spinner) {
+                // Check if spinner is visible (not hidden)
+                const rect = spinner.getBoundingClientRect();
+                const style = window.getComputedStyle(spinner);
+                if (rect.width > 0 && rect.height > 0 &&
+                    style.visibility !== 'hidden' && style.display !== 'none') {
+                    console.log('Tweet Bookmark: Loading detected via spinner:', selector);
+                    return true;
+                }
+            }
+        }
+
+        // Strategy 2: Check for animated loading elements
+        const animatedElements = viewport.querySelectorAll('[class*="loading"], [class*="spinner"]');
+        for (const el of animatedElements) {
+            const style = window.getComputedStyle(el);
+            if (style.animationName && style.animationName !== 'none') {
+                console.log('Tweet Bookmark: Loading detected via animation');
+                return true;
+            }
+        }
+
+        // Strategy 3: Check for placeholder tweet cards (cellInnerDiv without tweet links)
+        const dmContentArea = viewport.closest?.('[data-testid="DmActivityViewport"]') ||
+                              document.querySelector('[data-testid="DmActivityViewport"]') ||
+                              viewport;
+
+        const cellInnerDivs = dmContentArea.querySelectorAll('[data-testid="cellInnerDiv"]');
+        for (const cell of cellInnerDivs) {
+            // Check if this cell is visible in viewport
+            const rect = cell.getBoundingClientRect();
+            if (rect.height === 0 || rect.top > window.innerHeight || rect.bottom < 0) {
+                continue; // Skip off-screen cells
+            }
+
+            // A placeholder is a cell that exists but has no tweet link inside yet
+            const hasTweetLink = cell.querySelector('a[href*="/status/"]');
+            if (!hasTweetLink) {
+                // Check if cell has minimal content (placeholder state)
+                const hasContent = cell.textContent.trim().length > 20;
+                if (!hasContent) {
+                    console.log('Tweet Bookmark: Loading detected - placeholder cellInnerDiv found');
+                    return true;
+                }
+            }
+
+            // Strategy 3b: Check for "x.com" placeholder cards
+            // Twitter shows "x.com" placeholder text while tweet content loads
+            const text = cell.textContent.trim();
+            if (text === 'x.com' || (text.length < 15 && text.includes('x.com') && !hasTweetLink)) {
+                console.log('Tweet Bookmark: Loading detected - x.com placeholder card');
+                return true;
+            }
+        }
+
+        // Strategy 4: Check if scrollHeight is actively changing (content loading)
+        const currentScrollHeight = viewport.scrollHeight;
+        if (dmScanState.lastScrollHeight > 0) {
+            const scrollHeightChanged = Math.abs(currentScrollHeight - dmScanState.lastScrollHeight) > 100;
+            if (scrollHeightChanged) {
+                console.log('Tweet Bookmark: Loading detected - scrollHeight changed from',
+                            dmScanState.lastScrollHeight, 'to', currentScrollHeight);
+                dmScanState.lastScrollHeight = currentScrollHeight;
+                return true;
+            }
+        }
+        dmScanState.lastScrollHeight = currentScrollHeight;
+
+        return false;
+    }
+
+    // Wait for loading to complete before continuing scan
+    async function waitForLoadingToComplete(viewport, maxWaitMs = 15000) {
+        const startTime = Date.now();
+        const pollInterval = 250;
+        let isLoading = isTwitterLoading(viewport);
+
+        if (!isLoading) {
+            return; // Not loading, no need to wait
+        }
+
+        console.log('Tweet Bookmark: Waiting for content to load...');
+
+        // Update progress panel to show waiting status
+        if (scanProgressPanel) {
+            const scrollPosition = scanProgressPanel.querySelector('.scroll-position');
+            if (scrollPosition) {
+                scrollPosition.textContent = 'Waiting for content to load...';
+            }
+            scanProgressPanel.classList.add('waiting');
+        }
+
+        // Poll until loading completes or timeout
+        while (isLoading && (Date.now() - startTime) < maxWaitMs) {
+            await sleep(pollInterval);
+
+            // Check if scan was cancelled or paused during wait
+            if (dmScanState.isCancelled) {
+                console.log('Tweet Bookmark: Scan cancelled during loading wait');
+                break;
+            }
+
+            if (dmScanState.isPaused) {
+                // If paused, wait for resume before continuing
+                await waitForResume();
+                if (dmScanState.isCancelled) break;
+            }
+
+            isLoading = isTwitterLoading(viewport);
+        }
+
+        // Remove waiting class from progress panel
+        if (scanProgressPanel) {
+            scanProgressPanel.classList.remove('waiting');
+        }
+
+        if (isLoading) {
+            console.log(`Tweet Bookmark: Loading timeout after ${maxWaitMs}ms, continuing scan`);
+        } else {
+            const waitedMs = Date.now() - startTime;
+            console.log(`Tweet Bookmark: Loading completed after ${waitedMs}ms`);
+        }
+
+        // Give Twitter a moment to render the new content
+        await sleep(200);
+    }
+
     // Scan DM conversation for shared tweets with progressive scrolling
     async function scanDMForTweets() {
         // Prevent multiple concurrent scans
@@ -760,7 +906,34 @@
                 noNewTweetsCount = 0;
                 dmScanState.consecutiveEmptyScrolls = 0;
             } else {
-                if (viewport.scrollTop <= minScrollReached + scrollStep) {
+                // Check if Twitter is loading before counting as empty
+                if (dmScanState.loadingCheckEnabled && isTwitterLoading(viewport)) {
+                    console.log('Tweet Bookmark: Loading detected, waiting for content...');
+                    await waitForLoadingToComplete(viewport, dmScanState.maxLoadingWaitMs);
+
+                    // Rescan after loading completes to pick up newly loaded tweets
+                    const postLoadCards = findTweetCardsInDM();
+                    for (const card of postLoadCards) {
+                        if (card.tweetId && !dmScanState.foundTweets.has(card.tweetId)) {
+                            const typeInfo = detectTweetType(card.element, card.tweetLink);
+                            card.tweetType = typeInfo.type;
+                            card.hasMedia = typeInfo.hasMedia;
+                            card.mediaCount = typeInfo.mediaCount;
+                            card.isQuote = typeInfo.hasQuote;
+                            card.isThread = typeInfo.isThread;
+                            dmScanState.foundTweets.set(card.tweetId, card);
+                        }
+                    }
+
+                    // Only count as empty if still no new tweets after loading
+                    if (dmScanState.foundTweets.size > previousCount) {
+                        noNewTweetsCount = 0;
+                        dmScanState.consecutiveEmptyScrolls = 0;
+                    } else if (viewport.scrollTop <= minScrollReached + scrollStep) {
+                        noNewTweetsCount++;
+                        dmScanState.consecutiveEmptyScrolls++;
+                    }
+                } else if (viewport.scrollTop <= minScrollReached + scrollStep) {
                     noNewTweetsCount++;
                     dmScanState.consecutiveEmptyScrolls++;
                 }
@@ -784,6 +957,15 @@
             // Calculate next target position (scrolling UP toward 0)
             targetScrollTop = Math.max(0, targetScrollTop - scrollStep);
 
+            // Use smaller scroll step when loading detected (content still appearing)
+            if (dmScanState.consecutiveEmptyScrolls === 0 && isTwitterLoading(viewport)) {
+                scrollStep = viewport.clientHeight * 0.3;
+                console.log('Tweet Bookmark: Using smaller scroll step due to loading');
+            }
+
+            // Store count before scroll to detect new content
+            const previousFoundCount = dmScanState.foundTweets.size;
+
             // Force scroll to target position
             viewport.scrollTo({ top: targetScrollTop, behavior: 'instant' });
 
@@ -791,6 +973,49 @@
 
             // Wait for new content to render (adaptive delay)
             await sleep(dmScanState.scrollDelay);
+
+            // Wait for loading AND new content to appear (max 5 seconds)
+            const waitStart = Date.now();
+            const maxContentWait = 5000;
+            let contentStable = false;
+
+            while (Date.now() - waitStart < maxContentWait && !contentStable) {
+                // Check if scan was cancelled or paused during wait
+                if (dmScanState.isCancelled) break;
+                if (dmScanState.isPaused) {
+                    await waitForResume();
+                    if (dmScanState.isCancelled) break;
+                }
+
+                // Check if loading
+                if (isTwitterLoading(viewport)) {
+                    await sleep(250);
+                    continue;
+                }
+
+                // Collect tweets at current position
+                const cards = findTweetCardsInDM();
+                for (const card of cards) {
+                    if (card.tweetId && !dmScanState.foundTweets.has(card.tweetId)) {
+                        const typeInfo = detectTweetType(card.element, card.tweetLink);
+                        card.tweetType = typeInfo.type;
+                        card.hasMedia = typeInfo.hasMedia;
+                        card.mediaCount = typeInfo.mediaCount;
+                        card.isQuote = typeInfo.hasQuote;
+                        card.isThread = typeInfo.isThread;
+                        dmScanState.foundTweets.set(card.tweetId, card);
+                    }
+                }
+
+                // Check if we got new tweets
+                if (dmScanState.foundTweets.size > previousFoundCount) {
+                    contentStable = true; // Got new content, can proceed
+                    console.log(`Tweet Bookmark: New content found after ${Date.now() - waitStart}ms`);
+                } else {
+                    // No new tweets yet, wait a bit more
+                    await sleep(200);
+                }
+            }
 
             // Update minimum scroll position reached
             if (viewport.scrollTop < minScrollReached) {
@@ -870,7 +1095,7 @@
 
     // Find all tweet cards embedded in DM messages
     function findTweetCardsInDM() {
-        console.log('%c[Tweet Bookmark v2.3.0] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
+        console.log('%c[Tweet Bookmark v2.5.0] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
 
         // SIMPLE APPROACH: Find all unique tweet IDs first, then build card objects
         const tweetIdToLink = new Map(); // Map<tweetId, {link, messageContainer}>
