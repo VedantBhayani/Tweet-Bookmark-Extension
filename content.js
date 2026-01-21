@@ -1,12 +1,12 @@
 // Tweet Bookmark Extension - Content Script
 // Runs on twitter.com and x.com
-// Version: 2.5.0 - Wait-for-content DM Scanner for improved tweet discovery
+// Version: 2.5.3 - Simplified DM Scanner (v2.4 speed + x.com detection)
 
 (function () {
     'use strict';
 
     // VERSION CHECK - Log to confirm latest code is running
-    console.log('%c[Tweet Bookmark v2.5.0] Content script loaded', 'color: green; font-weight: bold');
+    console.log('%c[Tweet Bookmark v2.5.3] Content script loaded', 'color: green; font-weight: bold');
 
     // Track which tweets already have our button
     const processedTweets = new Set();
@@ -963,59 +963,13 @@
                 console.log('Tweet Bookmark: Using smaller scroll step due to loading');
             }
 
-            // Store count before scroll to detect new content
-            const previousFoundCount = dmScanState.foundTweets.size;
-
             // Force scroll to target position
             viewport.scrollTo({ top: targetScrollTop, behavior: 'instant' });
 
             console.log(`Tweet Bookmark: Iteration ${dmScanState.currentIteration}, target: ${targetScrollTop}, actual: ${viewport.scrollTop}, found: ${dmScanState.foundTweets.size}`);
 
-            // Wait for new content to render (adaptive delay)
+            // Wait for new content to render
             await sleep(dmScanState.scrollDelay);
-
-            // Wait for loading AND new content to appear (max 5 seconds)
-            const waitStart = Date.now();
-            const maxContentWait = 5000;
-            let contentStable = false;
-
-            while (Date.now() - waitStart < maxContentWait && !contentStable) {
-                // Check if scan was cancelled or paused during wait
-                if (dmScanState.isCancelled) break;
-                if (dmScanState.isPaused) {
-                    await waitForResume();
-                    if (dmScanState.isCancelled) break;
-                }
-
-                // Check if loading
-                if (isTwitterLoading(viewport)) {
-                    await sleep(250);
-                    continue;
-                }
-
-                // Collect tweets at current position
-                const cards = findTweetCardsInDM();
-                for (const card of cards) {
-                    if (card.tweetId && !dmScanState.foundTweets.has(card.tweetId)) {
-                        const typeInfo = detectTweetType(card.element, card.tweetLink);
-                        card.tweetType = typeInfo.type;
-                        card.hasMedia = typeInfo.hasMedia;
-                        card.mediaCount = typeInfo.mediaCount;
-                        card.isQuote = typeInfo.hasQuote;
-                        card.isThread = typeInfo.isThread;
-                        dmScanState.foundTweets.set(card.tweetId, card);
-                    }
-                }
-
-                // Check if we got new tweets
-                if (dmScanState.foundTweets.size > previousFoundCount) {
-                    contentStable = true; // Got new content, can proceed
-                    console.log(`Tweet Bookmark: New content found after ${Date.now() - waitStart}ms`);
-                } else {
-                    // No new tweets yet, wait a bit more
-                    await sleep(200);
-                }
-            }
 
             // Update minimum scroll position reached
             if (viewport.scrollTop < minScrollReached) {
@@ -1095,7 +1049,7 @@
 
     // Find all tweet cards embedded in DM messages
     function findTweetCardsInDM() {
-        console.log('%c[Tweet Bookmark v2.5.0] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
+        console.log('%c[Tweet Bookmark v2.5.3] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
 
         // SIMPLE APPROACH: Find all unique tweet IDs first, then build card objects
         const tweetIdToLink = new Map(); // Map<tweetId, {link, messageContainer}>
