@@ -9,6 +9,10 @@ let editingBookmarkId = null;
 let deletingBookmarkId = null;
 let scrollObserver = null;
 
+// Selection mode state
+let selectedBookmarks = new Set();
+let selectionMode = false;
+
 // DOM Elements
 const searchInput = document.getElementById('search-input');
 const clearSearchBtn = document.getElementById('clear-search');
@@ -34,6 +38,20 @@ const deleteModal = document.getElementById('delete-modal');
 const deleteModalClose = document.getElementById('delete-modal-close');
 const deleteCancel = document.getElementById('delete-cancel');
 const deleteConfirm = document.getElementById('delete-confirm');
+
+// Bulk Action Elements
+const toggleSelectBtn = document.getElementById('toggle-select-btn');
+const selectAllContainer = document.getElementById('select-all-container');
+const selectAllCheckbox = document.getElementById('select-all');
+const selectionCountEl = document.getElementById('selection-count');
+const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
+
+// Bulk Delete Modal
+const bulkDeleteModal = document.getElementById('bulk-delete-modal');
+const bulkDeleteModalClose = document.getElementById('bulk-delete-modal-close');
+const bulkDeleteCancel = document.getElementById('bulk-delete-cancel');
+const bulkDeleteConfirm = document.getElementById('bulk-delete-confirm');
+const bulkDeleteCountEl = document.getElementById('bulk-delete-count');
 
 // Setup IntersectionObserver for scroll-triggered reveals
 function setupScrollObserver() {
@@ -384,6 +402,173 @@ async function confirmDelete() {
     }
 }
 
+// === SELECTION MODE FUNCTIONS ===
+
+// Toggle selection mode
+function toggleSelectionMode() {
+    selectionMode = !selectionMode;
+
+    if (selectionMode) {
+        toggleSelectBtn.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+            Cancel
+        `;
+        selectAllContainer.style.display = 'flex';
+        selectionCountEl.style.display = 'inline';
+    } else {
+        toggleSelectBtn.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 11 12 14 22 4"/>
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+            </svg>
+            Select
+        `;
+        selectAllContainer.style.display = 'none';
+        selectionCountEl.style.display = 'none';
+        bulkDeleteBtn.style.display = 'none';
+        deselectAll();
+    }
+
+    updateCardSelectionMode();
+}
+
+// Update cards for selection mode
+function updateCardSelectionMode() {
+    const cards = bookmarksContainer.querySelectorAll('.bookmark-card');
+    cards.forEach(card => {
+        if (selectionMode) {
+            card.classList.add('selectable');
+            // Add checkbox if not present
+            if (!card.querySelector('.card-checkbox')) {
+                const checkbox = document.createElement('div');
+                checkbox.className = 'card-checkbox';
+                checkbox.innerHTML = `<input type="checkbox" aria-label="Select bookmark">`;
+                card.appendChild(checkbox);
+
+                const input = checkbox.querySelector('input');
+                input.checked = selectedBookmarks.has(card.dataset.id);
+                input.addEventListener('change', (e) => {
+                    e.stopPropagation();
+                    toggleBookmarkSelection(card.dataset.id);
+                });
+            }
+        } else {
+            card.classList.remove('selectable', 'selected');
+            const checkbox = card.querySelector('.card-checkbox');
+            if (checkbox) checkbox.remove();
+        }
+    });
+}
+
+// Toggle individual bookmark selection
+function toggleBookmarkSelection(id) {
+    if (selectedBookmarks.has(id)) {
+        selectedBookmarks.delete(id);
+    } else {
+        selectedBookmarks.add(id);
+    }
+    updateSelectionUI();
+}
+
+// Select all visible bookmarks
+function selectAll() {
+    filteredBookmarks.forEach(bookmark => {
+        selectedBookmarks.add(bookmark.id);
+    });
+    updateSelectionUI();
+}
+
+// Deselect all bookmarks
+function deselectAll() {
+    selectedBookmarks.clear();
+    updateSelectionUI();
+}
+
+// Update selection UI
+function updateSelectionUI() {
+    const count = selectedBookmarks.size;
+    selectionCountEl.textContent = `${count} selected`;
+
+    // Update select all checkbox state
+    if (filteredBookmarks.length > 0) {
+        selectAllCheckbox.checked = count === filteredBookmarks.length;
+        selectAllCheckbox.indeterminate = count > 0 && count < filteredBookmarks.length;
+    }
+
+    // Show/hide bulk delete button
+    bulkDeleteBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+
+    // Update card visual states
+    const cards = bookmarksContainer.querySelectorAll('.bookmark-card');
+    cards.forEach(card => {
+        const isSelected = selectedBookmarks.has(card.dataset.id);
+        card.classList.toggle('selected', isSelected);
+        const checkbox = card.querySelector('.card-checkbox input');
+        if (checkbox) checkbox.checked = isSelected;
+    });
+}
+
+// Open bulk delete modal
+function openBulkDeleteModal() {
+    if (selectedBookmarks.size === 0) return;
+
+    bulkDeleteCountEl.textContent = selectedBookmarks.size;
+    bulkDeleteModal.style.display = 'flex';
+
+    setTimeout(() => {
+        bulkDeleteCancel.focus();
+    }, 100);
+}
+
+// Close bulk delete modal
+function closeBulkDeleteModal() {
+    bulkDeleteModal.style.display = 'none';
+}
+
+// Confirm bulk delete
+async function confirmBulkDelete() {
+    if (selectedBookmarks.size === 0) return;
+
+    const idsToDelete = Array.from(selectedBookmarks);
+    let deletedCount = 0;
+
+    try {
+        for (const id of idsToDelete) {
+            await deleteBookmark(id);
+            deletedCount++;
+        }
+
+        closeBulkDeleteModal();
+        selectedBookmarks.clear();
+        selectionMode = false;
+        toggleSelectionMode(); // This will reset UI
+        toggleSelectionMode(); // Toggle back to get correct state
+        selectionMode = false;
+
+        // Reset UI properly
+        toggleSelectBtn.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 11 12 14 22 4"/>
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+            </svg>
+            Select
+        `;
+        selectAllContainer.style.display = 'none';
+        selectionCountEl.style.display = 'none';
+        bulkDeleteBtn.style.display = 'none';
+
+        await loadBookmarks();
+        showToast(`🗑️ Deleted ${deletedCount} bookmarks!`, 'success');
+    } catch (error) {
+        console.error('Error deleting bookmarks:', error);
+        showToast('Error deleting some bookmarks', 'error');
+        await loadBookmarks();
+    }
+}
+
 // Export bookmarks
 async function exportBookmarksToFile() {
     try {
@@ -559,12 +744,51 @@ function setupEventListeners() {
         if (e.target === deleteModal) closeDeleteModal();
     });
 
+    // Bulk action controls
+    toggleSelectBtn.addEventListener('click', toggleSelectionMode);
+
+    selectAllCheckbox.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            selectAll();
+        } else {
+            deselectAll();
+        }
+    });
+
+    bulkDeleteBtn.addEventListener('click', openBulkDeleteModal);
+
+    // Bulk delete modal
+    bulkDeleteModalClose.addEventListener('click', closeBulkDeleteModal);
+    bulkDeleteCancel.addEventListener('click', closeBulkDeleteModal);
+    bulkDeleteConfirm.addEventListener('click', confirmBulkDelete);
+    bulkDeleteModal.addEventListener('click', (e) => {
+        if (e.target === bulkDeleteModal) closeBulkDeleteModal();
+    });
+
+    // Card click for selection mode
+    bookmarksContainer.addEventListener('click', (e) => {
+        if (!selectionMode) return;
+
+        const card = e.target.closest('.bookmark-card');
+        if (!card) return;
+
+        // Don't toggle if clicking on links or buttons
+        if (e.target.closest('a') || e.target.closest('button')) return;
+
+        // Toggle selection
+        toggleBookmarkSelection(card.dataset.id);
+    });
+
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         // Escape to close modals
         if (e.key === 'Escape') {
             closeEditModal();
             closeDeleteModal();
+            closeBulkDeleteModal();
+            if (selectionMode) {
+                toggleSelectionMode();
+            }
         }
 
         // Ctrl/Cmd + F to focus search
@@ -578,6 +802,12 @@ function setupEventListeners() {
         if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
             e.preventDefault();
             exportBookmarksToFile();
+        }
+
+        // Ctrl/Cmd + A to select all (in selection mode)
+        if ((e.ctrlKey || e.metaKey) && e.key === 'a' && selectionMode) {
+            e.preventDefault();
+            selectAll();
         }
     });
 }

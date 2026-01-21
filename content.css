@@ -805,6 +805,37 @@
   text-align: center;
 }
 
+/* DM Save All Button - Ensure visibility */
+.dm-save-all-btn {
+  background: linear-gradient(135deg, #e6a756 0%, #d4944a 100%) !important;
+  color: #0c0c0c !important;
+  border: none !important;
+  font-weight: 600;
+  padding: 12px 24px;
+  border-radius: 10px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s var(--spring-bounce);
+  box-shadow: 0 4px 0 #b8863f,
+              0 6px 20px rgba(0, 0, 0, 0.2),
+              0 0 20px rgba(230, 167, 86, 0.15);
+}
+
+.dm-save-all-btn:hover {
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 7px 0 #b8863f,
+              0 12px 30px rgba(0, 0, 0, 0.25),
+              0 0 40px rgba(230, 167, 86, 0.4);
+}
+
+.dm-save-all-btn:disabled {
+  background: #3a3a3a !important;
+  color: #6a6a6a !important;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
 /* Responsive adjustments for DM scan button */
 @media (max-width: 600px) {
   .tweet-bookmark-dm-scan-btn {

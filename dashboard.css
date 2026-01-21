@@ -1238,3 +1238,107 @@ body {
         padding: var(--space-md);
     }
 }
+
+/* === BULK ACTIONS & SELECTION MODE === */
+.bulk-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-right: var(--space-md);
+}
+
+.select-all-container {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    color: var(--text-body);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.select-all-container:hover {
+    background: var(--glass-highlight);
+    border-color: var(--accent);
+}
+
+.select-all-container input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.selection-count {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent);
+    padding: 8px 12px;
+    background: var(--accent-dim);
+    border-radius: 6px;
+    font-weight: 500;
+}
+
+/* Selection Mode Card Styles */
+.bookmark-card.selectable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.bookmark-card.selectable:hover {
+    border-color: var(--accent);
+}
+
+.bookmark-card.selected {
+    border-color: var(--danger) !important;
+    background: rgba(248, 113, 113, 0.08);
+    box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.3),
+                0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.bookmark-card.selected::before {
+    opacity: 1;
+    background: linear-gradient(180deg, var(--danger) 0%, #e05555 100%);
+}
+
+/* Card Checkbox */
+.card-checkbox {
+    display: none;
+    position: absolute;
+    top: var(--space-md);
+    right: var(--space-md);
+    z-index: 10;
+}
+
+.card-checkbox input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+    accent-color: var(--danger);
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.bookmark-card.selectable .card-checkbox {
+    display: block;
+}
+
+.bookmark-card.selectable .bookmark-actions {
+    display: none;
+}
+
+/* Responsive adjustments for bulk actions */
+@media (max-width: 768px) {
+    .bulk-actions {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .selection-count {
+        font-size: 11px;
+        padding: 6px 10px;
+    }
+}
