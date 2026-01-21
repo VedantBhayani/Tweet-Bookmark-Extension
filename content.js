@@ -1,12 +1,12 @@
 // Tweet Bookmark Extension - Content Script
 // Runs on twitter.com and x.com
-// Version: 2.5.3 - Simplified DM Scanner (v2.4 speed + x.com detection)
+// Version: 2.6.0 - Multi-pass bidirectional DM Scanner for 100+ tweets
 
 (function () {
     'use strict';
 
     // VERSION CHECK - Log to confirm latest code is running
-    console.log('%c[Tweet Bookmark v2.5.3] Content script loaded', 'color: green; font-weight: bold');
+    console.log('%c[Tweet Bookmark v2.6.0] Content script loaded', 'color: green; font-weight: bold');
 
     // Track which tweets already have our button
     const processedTweets = new Set();
@@ -1030,6 +1030,130 @@
             }
         }
 
+        // ========== PASS 2: Scroll DOWN (Top to Bottom) ==========
+        if (!dmScanState.isCancelled && dmScanState.foundTweets.size < 150) {
+            console.log('%c[Tweet Bookmark] Starting Pass 2: Top → Bottom', 'color: orange; font-weight: bold');
+            updateScanProgress({ status: 'scanning', pass: 2 });
+
+            // Start from top
+            viewport.scrollTo({ top: 0, behavior: 'instant' });
+            await sleep(400);
+
+            let pass2Target = 0;
+            const pass2Step = viewport.clientHeight * 0.4;
+            let pass2EmptyCount = 0;
+            const pass2MaxEmpty = 8;
+
+            while (!dmScanState.isCancelled && pass2EmptyCount < pass2MaxEmpty && pass2Target < viewport.scrollHeight) {
+                if (dmScanState.isPaused) {
+                    await waitForResume();
+                    if (dmScanState.isCancelled) break;
+                }
+
+                dmScanState.currentIteration++;
+                const prevCount = dmScanState.foundTweets.size;
+
+                // Collect tweets
+                const cards = findTweetCardsInDM();
+                for (const card of cards) {
+                    if (card.tweetId && !dmScanState.foundTweets.has(card.tweetId)) {
+                        const typeInfo = detectTweetType(card.element, card.tweetLink);
+                        card.tweetType = typeInfo.type;
+                        card.hasMedia = typeInfo.hasMedia;
+                        card.mediaCount = typeInfo.mediaCount;
+                        card.isQuote = typeInfo.hasQuote;
+                        card.isThread = typeInfo.isThread;
+                        dmScanState.foundTweets.set(card.tweetId, card);
+                    }
+                }
+
+                if (dmScanState.foundTweets.size > prevCount) {
+                    pass2EmptyCount = 0;
+                } else {
+                    pass2EmptyCount++;
+                }
+
+                // Scroll DOWN
+                pass2Target = Math.min(viewport.scrollHeight, pass2Target + pass2Step);
+                viewport.scrollTo({ top: pass2Target, behavior: 'instant' });
+
+                console.log(`Tweet Bookmark: Pass 2, Iteration ${dmScanState.currentIteration}, target: ${pass2Target}, found: ${dmScanState.foundTweets.size}`);
+
+                await sleep(300);
+
+                // Update progress
+                updateScanProgress({
+                    tweetsFound: dmScanState.foundTweets.size,
+                    iteration: dmScanState.currentIteration
+                });
+            }
+
+            console.log(`Tweet Bookmark: Pass 2 complete, found ${dmScanState.foundTweets.size} total tweets`);
+        }
+
+        // ========== PASS 3: Fine-grain scroll UP with smaller steps ==========
+        if (!dmScanState.isCancelled && dmScanState.foundTweets.size < 150) {
+            console.log('%c[Tweet Bookmark] Starting Pass 3: Bottom → Top (fine-grain)', 'color: purple; font-weight: bold');
+            updateScanProgress({ status: 'scanning', pass: 3 });
+
+            // Start from bottom again
+            viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'instant' });
+            await sleep(400);
+
+            let pass3Target = viewport.scrollHeight;
+            const pass3Step = viewport.clientHeight * 0.25; // Smaller steps
+            let pass3EmptyCount = 0;
+            const pass3MaxEmpty = 12;
+
+            while (!dmScanState.isCancelled && pass3EmptyCount < pass3MaxEmpty && pass3Target > 0) {
+                if (dmScanState.isPaused) {
+                    await waitForResume();
+                    if (dmScanState.isCancelled) break;
+                }
+
+                dmScanState.currentIteration++;
+                const prevCount = dmScanState.foundTweets.size;
+
+                // Collect tweets
+                const cards = findTweetCardsInDM();
+                for (const card of cards) {
+                    if (card.tweetId && !dmScanState.foundTweets.has(card.tweetId)) {
+                        const typeInfo = detectTweetType(card.element, card.tweetLink);
+                        card.tweetType = typeInfo.type;
+                        card.hasMedia = typeInfo.hasMedia;
+                        card.mediaCount = typeInfo.mediaCount;
+                        card.isQuote = typeInfo.hasQuote;
+                        card.isThread = typeInfo.isThread;
+                        dmScanState.foundTweets.set(card.tweetId, card);
+                    }
+                }
+
+                if (dmScanState.foundTweets.size > prevCount) {
+                    pass3EmptyCount = 0;
+                } else {
+                    pass3EmptyCount++;
+                }
+
+                // Scroll UP with smaller steps
+                pass3Target = Math.max(0, pass3Target - pass3Step);
+                viewport.scrollTo({ top: pass3Target, behavior: 'instant' });
+
+                console.log(`Tweet Bookmark: Pass 3, Iteration ${dmScanState.currentIteration}, target: ${pass3Target}, found: ${dmScanState.foundTweets.size}`);
+
+                await sleep(250);
+
+                // Update progress
+                updateScanProgress({
+                    tweetsFound: dmScanState.foundTweets.size,
+                    iteration: dmScanState.currentIteration
+                });
+
+                if (pass3Target <= 10) break;
+            }
+
+            console.log(`Tweet Bookmark: Pass 3 complete, found ${dmScanState.foundTweets.size} total tweets`);
+        }
+
         // Restore scroll position
         viewport.scrollTop = originalScroll;
 
@@ -1049,7 +1173,7 @@
 
     // Find all tweet cards embedded in DM messages
     function findTweetCardsInDM() {
-        console.log('%c[Tweet Bookmark v2.5.3] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
+        console.log('%c[Tweet Bookmark v2.6.0] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
 
         // SIMPLE APPROACH: Find all unique tweet IDs first, then build card objects
         const tweetIdToLink = new Map(); // Map<tweetId, {link, messageContainer}>
