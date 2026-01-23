@@ -2,6 +2,15 @@
 
 This document contains everything learned about the DM tweet scanning functionality.
 
+## Table of Contents
+- [Overview](#overview)
+- [Core Problem: Twitter's Virtualization](#core-problem-twitters-virtualization)
+- [Architecture](#architecture)
+- [Scan Algorithm (v2.6.0)](#scan-algorithm-v260)
+- [Key Functions](#key-functions)
+- [Problems Encountered & Solutions](#problems-encountered--solutions)
+- [Version History](#version-history)
+
 ---
 
 ## Overview
@@ -260,6 +269,5 @@ Tweet Bookmark: Loading detected, waiting for content...
 
 ## File Locations
 
-- Extension: `E:\Tweet Project\tweet-bookmark-extension\`
+- Extension: `[Project Root]`
 - Console logs: Export from DevTools
-- Plan files: `C:\Users\LENOVO\.claude\plans\`
