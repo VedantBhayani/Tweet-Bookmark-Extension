@@ -26,7 +26,7 @@
         foundTweets: new Map(),
         scrollProgress: 0,
         currentIteration: 0,
-        maxIterations: 500,
+        maxIterations: 3000,
         startTime: null,
         lastCheckpoint: null,
         viewport: null,
@@ -841,8 +841,8 @@
         updateScanProgress({ tweetsFound: 0, scrollPercent: 0, iteration: 0, status: 'scanning' });
 
         // Constants for robust scanning
-        const MAX_STABLE_SCROLLS = 15;  // More tolerance for sparse areas and Twitter virtualization
-        const MAX_TWEETS = 1500;        // Hard safety limit for 1000+ tweets
+        const MAX_STABLE_SCROLLS = 30;  // More tolerance for sparse areas and Twitter virtualization
+        const MAX_TWEETS = 5000;        // Hard safety limit for 1000+ tweets
         let noNewTweetsCount = 0;
 
         // Save original scroll position
@@ -1074,7 +1074,7 @@
         }
 
         // ========== PASS 2: Scroll DOWN (Top to Bottom) ==========
-        if (!dmScanState.isCancelled && dmScanState.foundTweets.size < 300) {
+        if (!dmScanState.isCancelled && dmScanState.foundTweets.size < MAX_TWEETS) {
             console.log('%c[Tweet Bookmark] Starting Pass 2: Top → Bottom', 'color: orange; font-weight: bold');
             updateScanProgress({ status: 'scanning', pass: 2 });
 
@@ -1157,7 +1157,7 @@
         }
 
         // ========== PASS 3: Fine-grain scroll UP with smaller steps ==========
-        if (!dmScanState.isCancelled && dmScanState.foundTweets.size < 300) {
+        if (!dmScanState.isCancelled && dmScanState.foundTweets.size < MAX_TWEETS) {
             console.log('%c[Tweet Bookmark] Starting Pass 3: Bottom → Top (fine-grain)', 'color: purple; font-weight: bold');
             updateScanProgress({ status: 'scanning', pass: 3 });
 
@@ -1890,35 +1890,45 @@
             let savedCount = 0;
             let errorCount = 0;
 
-            for (let i = 0; i < selectedTweets.length; i++) {
-                const tweet = selectedTweets[i];
+            // Batch save implementation
+            progressFill.style.width = '50%';
+            progressText.textContent = `Preparing ${selectedTweets.length} tweets...`;
 
-                // Update progress
-                const progress = ((i + 1) / selectedTweets.length) * 100;
-                progressFill.style.width = `${progress}%`;
-                progressText.textContent = `Saving ${i + 1} of ${selectedTweets.length}...`;
+            // Yield to UI
+            await new Promise(r => setTimeout(r, 50));
 
-                try {
-                    const bookmark = {
-                        ...tweet,
-                        tags: [tag, ...additionalTags],
-                        notes: `Shared in DM with ${recipient}`,
-                        savedAt: Date.now()
-                    };
-                    delete bookmark.alreadySaved;
-                    delete bookmark.isSentByMe;
-                    delete bookmark.tweetType;
-                    delete bookmark.hasMedia;
-                    delete bookmark.mediaCount;
-                    delete bookmark.isQuote;
-                    delete bookmark.isThread;
+            const bookmarksToSave = selectedTweets.map(tweet => {
+                const bookmark = {
+                    ...tweet,
+                    tags: [tag, ...additionalTags],
+                    notes: `Shared in DM with ${recipient}`,
+                    savedAt: Date.now()
+                };
+                // Clean up internal properties
+                delete bookmark.alreadySaved;
+                delete bookmark.isSentByMe;
+                delete bookmark.tweetType;
+                delete bookmark.hasMedia;
+                delete bookmark.mediaCount;
+                delete bookmark.isQuote;
+                delete bookmark.isThread;
+                return bookmark;
+            });
 
-                    await saveBookmark(bookmark);
-                    savedCount++;
-                } catch (error) {
-                    console.error('Tweet Bookmark: Error saving tweet:', error);
-                    errorCount++;
-                }
+            progressFill.style.width = '75%';
+            progressText.textContent = `Saving to storage...`;
+
+            // Yield to UI
+            await new Promise(r => setTimeout(r, 50));
+
+            try {
+                // Use the new batch save function from storage.js
+                await saveBookmarksBatch(bookmarksToSave);
+                savedCount = bookmarksToSave.length;
+                progressFill.style.width = '100%';
+            } catch (error) {
+                console.error('Tweet Bookmark: Error batch saving tweets:', error);
+                errorCount = bookmarksToSave.length;
             }
 
             closeModal();
