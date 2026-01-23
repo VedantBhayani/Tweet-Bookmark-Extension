@@ -37,6 +37,25 @@ async function saveBookmark(bookmark) {
   return bookmark;
 }
 
+// Save multiple bookmarks in a batch (optimization for bulk save)
+async function saveBookmarksBatch(newBookmarksList) {
+  const bookmarks = await getAllBookmarks();
+  const bookmarkMap = new Map();
+
+  // Index existing bookmarks
+  bookmarks.forEach(b => bookmarkMap.set(b.id, b));
+
+  // Merge new bookmarks (overwriting existing ones)
+  newBookmarksList.forEach(b => bookmarkMap.set(b.id, b));
+
+  const mergedBookmarks = Array.from(bookmarkMap.values());
+  // Sort by savedAt descending (newest first) to keep storage tidy
+  mergedBookmarks.sort((a, b) => b.savedAt - a.savedAt);
+
+  await saveAllBookmarks(mergedBookmarks);
+  return mergedBookmarks.length;
+}
+
 // Get a single bookmark by ID
 async function getBookmark(id) {
   const bookmarks = await getAllBookmarks();
