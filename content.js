@@ -26,7 +26,7 @@
         foundTweets: new Map(),
         scrollProgress: 0,
         currentIteration: 0,
-        maxIterations: 3000,
+        maxIterations: 5000,
         startTime: null,
         lastCheckpoint: null,
         viewport: null,
@@ -37,15 +37,20 @@
         scrollDelay: 500,
         // Loading-aware scanning config
         loadingCheckEnabled: true,
-        maxLoadingWaitMs: 15000,
+        maxLoadingWaitMs: 25000,
         lastScrollHeight: 0
     };
 
     // Scan progress panel element reference
     let scanProgressPanel = null;
 
-    // Helper: Sleep/delay function for async operations
-    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    // Helper: Sleep/delay function with randomization for human-like behavior
+    const sleep = (ms) => {
+        // Add +/- 20% jitter
+        const jitter = ms * 0.2;
+        const randomMs = ms + (Math.random() * jitter * 2 - jitter);
+        return new Promise(resolve => setTimeout(resolve, randomMs));
+    };
 
     // Extract tweet ID from URL
     function extractTweetId(url) {
@@ -894,7 +899,7 @@
         updateScanProgress({ tweetsFound: 0, scrollPercent: 0, iteration: 0, status: 'scanning' });
 
         // Constants for robust scanning
-        const MAX_STABLE_SCROLLS = 30;  // More tolerance for sparse areas and Twitter virtualization
+        const MAX_STABLE_SCROLLS = 100;  // Increased tolerance for sparse areas (e.g. long gaps between shared tweets)
         const MAX_TWEETS = 5000;        // Hard safety limit for 1000+ tweets
         let noNewTweetsCount = 0;
 
@@ -1010,16 +1015,21 @@
             }
 
             // Adaptive scrolling: adjust step size based on consecutive empty scrolls
+            // Add randomness to scroll step to mimic human behavior
+            const stepJitter = (Math.random() * 0.1) - 0.05; // +/- 5%
+            let currentScrollMultiplier = dmScanState.scrollStepMultiplier + stepJitter;
+
             if (dmScanState.consecutiveEmptyScrolls >= 5) {
-                dmScanState.scrollStepMultiplier = 0.3;
-                scrollStep = viewport.clientHeight * 0.3;
+                currentScrollMultiplier = 0.3;
             } else if (dmScanState.consecutiveEmptyScrolls >= 3) {
-                dmScanState.scrollStepMultiplier = 0.35;
-                scrollStep = viewport.clientHeight * 0.35;
+                currentScrollMultiplier = 0.35;
             }
 
-            // Direction reversal: every 30 scrolls, briefly reverse direction to trigger different Twitter virtualization
-            if (dmScanState.currentIteration % 30 === 0 && dmScanState.currentIteration > 0) {
+            scrollStep = viewport.clientHeight * currentScrollMultiplier;
+
+            // Direction reversal: every 30 scrolls (with variance)
+            const reverseInterval = 30 + Math.floor(Math.random() * 10);
+            if (dmScanState.currentIteration % reverseInterval === 0 && dmScanState.currentIteration > 0) {
                 const currentPos = viewport.scrollTop;
                 const viewportHeight = viewport.clientHeight;
                 // Quick reverse scroll (scroll DOWN briefly)
@@ -1046,6 +1056,24 @@
                 await sleep(250);
             }
 
+            // Rate Limit Protection: Pause every 100 iterations (approx 50-80 tweets)
+            // We randomize the DURATION of the pause, not the interval, to ensure it actually triggers
+            if (dmScanState.currentIteration % 100 === 0 && dmScanState.currentIteration > 0) {
+                console.log('Tweet Bookmark: Taking a "human break" to avoid rate limits...');
+                updateScanProgress({ status: 'paused' }); // Visually indicate pause
+
+                // Update text to show why we paused
+                if (scanProgressPanel) {
+                    const scrollPosition = scanProgressPanel.querySelector('.scroll-position');
+                    if (scrollPosition) scrollPosition.textContent = 'Taking a short break (rate limits)...';
+                }
+
+                // Random pause between 4 and 10 seconds
+                const pauseDuration = 4000 + Math.random() * 6000;
+                await sleep(pauseDuration);
+                updateScanProgress({ status: 'scanning' });
+            }
+
             // Safety limit - max tweets to prevent infinite loops
             if (dmScanState.foundTweets.size > MAX_TWEETS) {
                 console.log(`Tweet Bookmark: Hit ${MAX_TWEETS} tweet limit, stopping scan`);
@@ -1061,7 +1089,10 @@
                 console.log('Tweet Bookmark: Using smaller scroll step due to loading');
             }
 
-            // Force scroll to target position
+            // Force scroll to target position with smooth behavior for small adjustments
+            // Use 'instant' for large jumps to avoid fighting the user/virtualization too much,
+            // but use 'smooth' occasionally or for smaller corrections if we were simulating full human behavior.
+            // For now, sticking to instant for reliability but with the jitter added above.
             viewport.scrollTo({ top: targetScrollTop, behavior: 'instant' });
 
             console.log(`Tweet Bookmark: Iteration ${dmScanState.currentIteration}, target: ${targetScrollTop}, actual: ${viewport.scrollTop}, found: ${dmScanState.foundTweets.size}`);
@@ -1123,6 +1154,18 @@
                 break;
             }
 
+            // STALL DETECTION: If we are close to the top but not moving for many iterations
+            if (viewport.scrollTop < 500 && dmScanState.consecutiveEmptyScrolls > 20) {
+                 console.log('Tweet Bookmark: Stuck near top with no new tweets. Assuming end of history.');
+                 break;
+            }
+
+            // STALL DETECTION: If we are close to the top but not moving for many iterations
+            if (viewport.scrollTop < 500 && dmScanState.consecutiveEmptyScrolls > 20) {
+                 console.log('Tweet Bookmark: Stuck near top with no new tweets. Assuming end of history.');
+                 break;
+            }
+
             // Yield to UI thread periodically
             if (dmScanState.currentIteration % 10 === 0) {
                 await new Promise(r => setTimeout(r, 0));
@@ -1139,11 +1182,14 @@
             await sleep(400);
 
             let pass2Target = 0;
-            const pass2Step = viewport.clientHeight * 0.3;
             let pass2EmptyCount = 0;
-            const pass2MaxEmpty = 12;
+            const pass2MaxEmpty = 50;
 
             while (!dmScanState.isCancelled && pass2EmptyCount < pass2MaxEmpty && pass2Target < viewport.scrollHeight) {
+                // Randomize step size (30% +/- 5%)
+                const stepJitter = (Math.random() * 0.1) - 0.05;
+                const currentStepMultiplier = 0.3 + stepJitter;
+                const pass2Step = viewport.clientHeight * currentStepMultiplier;
                 if (dmScanState.isPaused) {
                     await waitForResume();
                     if (dmScanState.isCancelled) break;
@@ -1156,13 +1202,10 @@
                 const cards = findTweetCardsInDM();
                 for (const card of cards) {
                     if (card.tweetId && !dmScanState.foundTweets.has(card.tweetId)) {
-                        const typeInfo = detectTweetType(card.element, card.tweetLink);
-                        card.tweetType = typeInfo.type;
-                        card.hasMedia = typeInfo.hasMedia;
-                        card.mediaCount = typeInfo.mediaCount;
-                        card.isQuote = typeInfo.hasQuote;
-                        card.isThread = typeInfo.isThread;
-                        dmScanState.foundTweets.set(card.tweetId, card);
+                        const data = processCardData(card);
+                        if (data) {
+                            dmScanState.foundTweets.set(card.tweetId, data);
+                        }
                     }
                 }
 
@@ -1222,11 +1265,14 @@
             await sleep(400);
 
             let pass3Target = viewport.scrollHeight;
-            const pass3Step = viewport.clientHeight * 0.20; // Smaller steps
             let pass3EmptyCount = 0;
-            const pass3MaxEmpty = 15;
+            const pass3MaxEmpty = 50;
 
             while (!dmScanState.isCancelled && pass3EmptyCount < pass3MaxEmpty && pass3Target > 0) {
+                // Randomize step size (20% +/- 5%)
+                const stepJitter = (Math.random() * 0.1) - 0.05;
+                const currentStepMultiplier = 0.20 + stepJitter;
+                const pass3Step = viewport.clientHeight * currentStepMultiplier;
                 if (dmScanState.isPaused) {
                     await waitForResume();
                     if (dmScanState.isCancelled) break;
@@ -1239,13 +1285,10 @@
                 const cards = findTweetCardsInDM();
                 for (const card of cards) {
                     if (card.tweetId && !dmScanState.foundTweets.has(card.tweetId)) {
-                        const typeInfo = detectTweetType(card.element, card.tweetLink);
-                        card.tweetType = typeInfo.type;
-                        card.hasMedia = typeInfo.hasMedia;
-                        card.mediaCount = typeInfo.mediaCount;
-                        card.isQuote = typeInfo.hasQuote;
-                        card.isThread = typeInfo.isThread;
-                        dmScanState.foundTweets.set(card.tweetId, card);
+                        const data = processCardData(card);
+                        if (data) {
+                            dmScanState.foundTweets.set(card.tweetId, data);
+                        }
                     }
                 }
 
@@ -1497,14 +1540,31 @@
         // Strategy 4: Check for blue bubble background (Twitter's sent message color)
         element = cardElement || messageContainer;
         for (let i = 0; i < 8 && element; i++) {
-            const bg = window.getComputedStyle(element).backgroundColor;
-            // Twitter's sent message color is typically blue/accent (rgb(29, 155, 240))
-            // Also check for variations with different spacing
+            const style = window.getComputedStyle(element);
+            const bg = style.backgroundColor;
+
+            // Twitter's sent message color is typically blue/accent
+            // Standard Blue: rgb(29, 155, 240) / #1d9bf0
+            // Dark Mode Dim: rgb(29, 155, 240)
+            // Dark Mode Lights Out: rgb(29, 155, 240)
+
+            // Check for the blue accent color in various formats
             if (bg.includes('29, 155, 240') ||
                 bg.includes('29,155,240') ||
                 bg.includes('1d9bf0') ||
-                bg.includes('rgb(29, 155, 240)')) {
-                return true;
+                // Check for other common accent colors users might have customized (purple, yellow, etc)
+                // If it's NOT white, transparent, black, or the standard "received" gray, it's likely sent.
+                (bg !== 'rgba(0, 0, 0, 0)' &&
+                 bg !== 'rgb(255, 255, 255)' &&
+                 bg !== 'rgb(0, 0, 0)' &&
+                 !bg.includes('239, 243, 244') && // Light mode received gray
+                 !bg.includes('47, 51, 54') &&     // Dark mode received gray
+                 !bg.includes('22, 24, 28'))) {    // Lights out received gray
+
+                 // Double check it's not a hover state or overlay
+                 if (style.position !== 'absolute' && style.opacity !== '0') {
+                     return true;
+                 }
             }
             element = element.parentElement;
         }
@@ -1695,6 +1755,19 @@
                 const firstMention = content.match(/@([a-zA-Z0-9_]{1,15})/);
                 if (firstMention && firstMention[1] !== 'i') {
                     author = '@' + firstMention[1];
+                }
+            }
+
+            // Strategy G: Fallback using sent/received status and conversation context
+            // In DMs, the author info is often missing from the bubble itself (especially in clusters)
+            if (!author || author === '@i' || author === '@unknown') {
+                if (tweetCard.isSentByMe) {
+                    author = '@You';
+                    authorName = 'You';
+                } else if (dmScanState.recipient && dmScanState.recipient !== '@unknown') {
+                    // In 1-on-1 DMs, received messages are from the recipient
+                    author = dmScanState.recipient;
+                    authorName = dmScanState.recipient;
                 }
             }
 
