@@ -33,7 +33,7 @@ Twitter DMs use a virtualized list that:
 |----------|--------------|-------|
 | v2.4 single pass | 80 | Completed 45 iterations, reached top |
 | User pre-scrolled first | 214 | Manual scrolling loaded more content |
-| v2.6 multi-pass | TBD | 3 passes in different directions |
+| v2.6+ multi-pass | not yet measured | 3 passes in different directions; no recorded result yet |
 
 ---
 
@@ -192,6 +192,9 @@ if (text === 'x.com' || (text.length < 15 && text.includes('x.com') && !hasTweet
 | 2.5.2 | Further reduced wait times (broke at 13 tweets) |
 | 2.5.3 | Removed wait loop, back to v2.4 speed |
 | 2.6.0 | **Multi-pass bidirectional scanning** |
+| 2.7.0 | Smaller scroll steps and direction reversal |
+| 2.8.0 | Timing and loading-detection changes |
+| 2.8.1 | Passes 2 and 3 store extracted data after a loading wait; raw cards were being dropped |
 
 ---
 
