@@ -6,7 +6,7 @@
     'use strict';
 
     // VERSION CHECK - Log to confirm latest code is running
-    console.log('%c[Tweet Bookmark v2.8.0] Content script loaded', 'color: green; font-weight: bold');
+    console.log('%c[Tweet Bookmark v2.8.1] Content script loaded', 'color: green; font-weight: bold');
 
     // Track which tweets already have our button
     const processedTweets = new Set();
@@ -1219,13 +1219,13 @@
                         const postLoadCards = findTweetCardsInDM();
                         for (const card of postLoadCards) {
                             if (card.tweetId && !dmScanState.foundTweets.has(card.tweetId)) {
-                                const typeInfo = detectTweetType(card.element, card.tweetLink);
-                                card.tweetType = typeInfo.type;
-                                card.hasMedia = typeInfo.hasMedia;
-                                card.mediaCount = typeInfo.mediaCount;
-                                card.isQuote = typeInfo.hasQuote;
-                                card.isThread = typeInfo.isThread;
-                                dmScanState.foundTweets.set(card.tweetId, card);
+                                // Store extracted data, as pass 1 does. A raw card has no id or
+                                // content, so it was filtered out at the end and, being marked as
+                                // seen, never re-captured.
+                                const data = processCardData(card);
+                                if (data) {
+                                    dmScanState.foundTweets.set(card.tweetId, data);
+                                }
                             }
                         }
                         // Only count as empty if still no new tweets
@@ -1302,13 +1302,13 @@
                         const postLoadCards = findTweetCardsInDM();
                         for (const card of postLoadCards) {
                             if (card.tweetId && !dmScanState.foundTweets.has(card.tweetId)) {
-                                const typeInfo = detectTweetType(card.element, card.tweetLink);
-                                card.tweetType = typeInfo.type;
-                                card.hasMedia = typeInfo.hasMedia;
-                                card.mediaCount = typeInfo.mediaCount;
-                                card.isQuote = typeInfo.hasQuote;
-                                card.isThread = typeInfo.isThread;
-                                dmScanState.foundTweets.set(card.tweetId, card);
+                                // Store extracted data, as pass 1 does. A raw card has no id or
+                                // content, so it was filtered out at the end and, being marked as
+                                // seen, never re-captured.
+                                const data = processCardData(card);
+                                if (data) {
+                                    dmScanState.foundTweets.set(card.tweetId, data);
+                                }
                             }
                         }
                         // Only count as empty if still no new tweets
@@ -1359,7 +1359,7 @@
 
     // Find all tweet cards embedded in DM messages
     function findTweetCardsInDM() {
-        console.log('%c[Tweet Bookmark v2.8.0] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
+        console.log('%c[Tweet Bookmark v2.8.1] findTweetCardsInDM() called', 'color: blue; font-weight: bold');
 
         // SIMPLE APPROACH: Find all unique tweet IDs first, then build card objects
         const tweetIdToLink = new Map(); // Map<tweetId, {link, messageContainer}>
