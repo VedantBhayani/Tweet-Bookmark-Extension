@@ -1,4 +1,4 @@
-// Tweet Bookmarks Dashboard - Production Ready
+// Tweet Bookmarks Dashboard
 // Features: Search, Filter, Notes, Quick Tags, Scroll Animations, Accessibility
 
 let allBookmarks = [];

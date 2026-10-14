@@ -5,7 +5,7 @@ Save, organize, and search your favorite tweets locally.
 ## Features
 
 - **Save Tweets**: One-click saving of tweets from your timeline.
-- **DM Tweet Scanner**: Automatically scans and bulk-bookmarks tweets shared in Direct Messages using a robust multi-pass algorithm (v2.6.0).
+- **DM Tweet Scanner**: Automatically scans and bulk-bookmarks tweets shared in Direct Messages using a multi-pass algorithm (scanner v2.8.1).
 - **Organization**: Tag tweets and search through your collection.
 - **Local Storage**: Data lives in your browser, respecting your privacy.
 - **Export/Import**: Backup and restore your bookmarks via JSON.
@@ -46,18 +46,19 @@ tweet-bookmark-extension/
 ├── manifest.json      # Extension config
 ├── content.js         # Injects save button on tweets and contains the multi-pass DM scanning logic
 ├── content.css        # Button and modal styles
-├── storage.js         # IndexedDB functions
+├── storage.js         # chrome.storage.local wrapper
 ├── dashboard.html     # Bookmark manager page
 ├── dashboard.css      # Dashboard styles
 ├── dashboard.js       # Dashboard logic
 ├── popup.html         # Extension popup
 ├── popup.js           # Popup logic
+├── LICENSE            # MIT License
 └── icons/             # Extension icons
 ```
 
 ## Notes
 
-- Data is stored locally in your browser (IndexedDB)
+- Data is stored locally in your browser (`chrome.storage.local`)
 - Export regularly as backup - data is lost if you uninstall or clear browser data
 - Works on both x.com and twitter.com
 
